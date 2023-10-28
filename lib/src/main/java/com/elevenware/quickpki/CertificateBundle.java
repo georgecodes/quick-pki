@@ -17,7 +17,7 @@ public class CertificateBundle {
         return keyPair;
     }
 
-    public X509Certificate getX509Certificate() {
+    public X509Certificate getCertificate() {
         return x509Certificate;
     }
 }
