@@ -22,7 +22,35 @@ public class CertGeneratorTests {
 
         CertGenerator generator = new CertGenerator(new BouncyCastleProvider());
         LocalDateTime startTime = LocalDateTime.now();
-        LocalDateTime endTime = startTime.plusYears(1L);
+        LocalDateTime endTime = startTime.plusMinutes(1L);
+
+        CertInfo info = CertInfo.builder()
+                .commonName("My Cert")
+                .startDate(startTime)
+                .endDate(endTime)
+                .build();
+
+        CertificateBundle bundle = generator.generate(info);
+        X509Certificate certificate  = bundle.getCertificate();;
+
+        assertEquals("CN=My Cert", certificate.getIssuerDN().getName());
+        assertThat(startTime).isEqualToIgnoringNanos(dateToLocalDateTime(certificate.getNotBefore()));
+        assertThat(endTime).isEqualToIgnoringNanos(dateToLocalDateTime(certificate.getNotAfter()));
+        PublicKey key = certificate.getPublicKey();
+        try {
+            certificate.verify(key);
+        } catch (SignatureException signatureException) {
+            fail("Not self-signed");
+        }
+
+    }
+
+    @Test
+    void generateSigned() throws Exception {
+
+        CertGenerator generator = new CertGenerator(new BouncyCastleProvider());
+        LocalDateTime startTime = LocalDateTime.now();
+        LocalDateTime endTime = startTime.plusMinutes(1L);
 
         CertInfo info = CertInfo.builder()
                 .commonName("My Cert")
