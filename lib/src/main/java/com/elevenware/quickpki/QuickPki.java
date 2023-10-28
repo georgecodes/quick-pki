@@ -55,6 +55,11 @@ public class QuickPki {
 
         public QuickPki build() {
             QuickPki quickPki = new QuickPki();
+            try {
+                generateRootCert(issuer);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
             quickPki.issuerChain.add(rootCert);
             return quickPki;
         }

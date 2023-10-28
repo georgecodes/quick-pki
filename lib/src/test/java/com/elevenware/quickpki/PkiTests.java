@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.security.cert.X509Certificate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 public class PkiTests {
 
@@ -20,6 +21,10 @@ public class PkiTests {
         X509Certificate[] chain = quickPki.getCertificateChain();
 
         assertEquals(1, chain.length);
+        X509Certificate root = chain[0];
+        assertNotNull(root);
+
+        assertEquals("CN=My Issuer", root.getIssuerDN().getName());
 
     }
 
