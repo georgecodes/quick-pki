@@ -28,4 +28,23 @@ public class PkiTests {
 
     }
 
+    @Test
+    void canCreatePkiWithIntermediate() {
+
+        QuickPki quickPki = QuickPki.builder()
+                .withProvider(new BouncyCastleProvider())
+                .withIssuer("My Root Issuer")
+//                .withIntermediate("My Web Intermediate")
+                .build();
+
+        X509Certificate[] chain = quickPki.getCertificateChain();
+
+        assertEquals(1, chain.length);
+        X509Certificate root = chain[0];
+        assertNotNull(root);
+
+        assertEquals("CN=My Root Issuer", root.getIssuerDN().getName());
+
+    }
+
 }

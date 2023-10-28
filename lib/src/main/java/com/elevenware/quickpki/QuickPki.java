@@ -80,12 +80,16 @@ public class QuickPki {
 
             rootCertIssuer = new X500Name("CN=" + issuerName);
             X500Name rootCertSubject = rootCertIssuer;
-            ContentSigner rootCertContentSigner = new JcaContentSignerBuilder("SHA256withRSA").setProvider(provider).build(rootKeyPair.getPrivate());
-            X509v3CertificateBuilder rootCertBuilder = new JcaX509v3CertificateBuilder(rootCertIssuer, rootSerialNum, startDate, endDate, rootCertSubject, rootKeyPair.getPublic());
+            ContentSigner rootCertContentSigner = new JcaContentSignerBuilder("SHA256withRSA")
+                    .setProvider(provider).build(rootKeyPair.getPrivate());
+            X509v3CertificateBuilder rootCertBuilder =
+                    new JcaX509v3CertificateBuilder(rootCertIssuer, rootSerialNum,
+                            startDate, endDate, rootCertSubject, rootKeyPair.getPublic());
 
             JcaX509ExtensionUtils rootCertExtUtils = new JcaX509ExtensionUtils();
             rootCertBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
-            rootCertBuilder.addExtension(Extension.subjectKeyIdentifier, false, rootCertExtUtils.createSubjectKeyIdentifier(rootKeyPair.getPublic()));
+            rootCertBuilder.addExtension(Extension.subjectKeyIdentifier, false,
+                    rootCertExtUtils.createSubjectKeyIdentifier(rootKeyPair.getPublic()));
 
             rootCertHolder = rootCertBuilder.build(rootCertContentSigner);
             rootCert = new JcaX509CertificateConverter().setProvider(provider).getCertificate(rootCertHolder);
