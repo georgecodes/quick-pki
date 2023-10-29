@@ -14,6 +14,7 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import java.math.BigInteger;
 import java.security.*;
 import java.security.cert.X509Certificate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
 
@@ -28,12 +29,20 @@ public class CertGenerator {
         KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA", provider);
         keyPairGenerator.initialize(2048);
 
+        LocalDateTime sd = info.getStartDate();
+        LocalDateTime ed = info.getEndDate();
+        if(sd == null) {
+            sd = LocalDateTime.now();
+        }
+        if(ed == null) {
+            ed = LocalDateTime.now().plusYears(1L);
+        }
         Date startDate = Date
-                .from(info.getStartDate().atZone(ZoneId.systemDefault())
+                .from(sd.atZone(ZoneId.systemDefault())
                         .toInstant());
 
         Date endDate = Date
-                .from(info.getEndDate().atZone(ZoneId.systemDefault())
+                .from(ed.atZone(ZoneId.systemDefault())
                         .toInstant());
 
         KeyPair keyPair = keyPairGenerator.generateKeyPair();

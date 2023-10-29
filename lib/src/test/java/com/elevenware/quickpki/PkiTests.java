@@ -1,49 +1,43 @@
 package com.elevenware.quickpki;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.junit.jupiter.api.Test;
 
-import java.security.cert.X509Certificate;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import java.time.LocalDateTime;
 
 public class PkiTests {
 
     @Test
-    void canCreatePkiWithRootOnly() {
+    void canSerialise() {
 
-        QuickPki quickPki = QuickPki.builder()
-            .withProvider(new BouncyCastleProvider())
-            .withIssuer("My Issuer")
-            .build();
-
-        X509Certificate[] chain = quickPki.getCertificateChain();
-
-        assertEquals(1, chain.length);
-        X509Certificate root = chain[0];
-        assertNotNull(root);
-
-        assertEquals("CN=My Issuer", root.getIssuerDN().getName());
-
-    }
-
-    @Test
-    void canCreatePkiWithIntermediate() {
-
-        QuickPki quickPki = QuickPki.builder()
+        QuickPki pki = new QuickPki();
+        CertificateAuthority first = pki.addCertificateAuthority(CertificateAuthority.builder()
+                .withIssuer("My Root")
                 .withProvider(new BouncyCastleProvider())
-                .withIssuer("My Root Issuer")
-//                .withIntermediate("My Web Intermediate")
-                .build();
+                        .withIntermediate(CertInfo.builder()
+                                .commonName("My Intermediate 1")
+                                .build())
+                        .withIntermediate(CertInfo.builder()
+                                .commonName("My Intermediate 2").build())
+                        .withIntermediate(CertInfo.builder()
+                                .commonName("My Intermediate 3")
+                                .build())
+                .build());
 
-        X509Certificate[] chain = quickPki.getCertificateChain();
+        first.getChain("My Intermediate 1").issue(CertInfo.builder()
+                .commonName("My Leaf")
+                .endDate(LocalDateTime.now().plusMinutes(1L))
+                .build());
 
-        assertEquals(1, chain.length);
-        X509Certificate root = chain[0];
-        assertNotNull(root);
+        JsonObject json = JsonParser.parseString(pki.serialise()).getAsJsonObject();
 
-        assertEquals("CN=My Root Issuer", root.getIssuerDN().getName());
+        Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+        System.out.println(gson.toJson(json));
 
     }
 

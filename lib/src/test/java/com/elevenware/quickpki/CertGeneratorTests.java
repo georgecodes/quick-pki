@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
 
+import static com.elevenware.quickpki.Utils.dateToLocalDateTime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -98,22 +99,11 @@ public class CertGeneratorTests {
 
         X500Principal issuerX500Principal = certificate.getIssuerX500Principal();
 
-        dumpCert(certificate);
+        Utils.dumpCert(certificate);
 
     }
 
-    private void dumpCert(X509Certificate certificate) throws IOException {
-        StringWriter sw = new StringWriter();
-        try (PEMWriter pw = new PEMWriter(sw)) {
-            pw.writeObject(certificate);
-        }
-        System.out.println(sw.toString());
-    }
 
-    public LocalDateTime dateToLocalDateTime(Date dateToConvert) {
-        return dateToConvert.toInstant()
-                .atZone(ZoneId.systemDefault())
-                .toLocalDateTime();
-    }
+
 
 }
