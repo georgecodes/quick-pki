@@ -12,3 +12,4 @@ plugins {
 
 rootProject.name = 'quick-pki'
 include('lib')
+include('stack')
