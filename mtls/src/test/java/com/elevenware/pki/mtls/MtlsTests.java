@@ -1,6 +1,6 @@
 package com.elevenware.pki.mtls;
 
-import com.elevenware.quickpki.QuickPki;
+import com.elevenware.quickpki.*;
 import io.undertow.Undertow;
 import io.undertow.util.HeaderMap;
 import io.undertow.util.HeaderValues;
@@ -22,6 +22,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
+import java.security.SecureRandom;
 import java.security.Security;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
@@ -34,14 +35,34 @@ public class MtlsTests {
 
     static Undertow server;
     static int port;
-    static QuickPki serverPki;
-    static QuickPki clientPki;
+    static CertificateAuthority serverPki;
+    static CertificateAuthority clientPki;
 
     @Test
     void test() throws Exception {
 
         SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(clientPki.);
+        CertificateChain clientChain = clientPki.getChain("client issuer");
+        CertificateChain serverChain = serverPki.getChain("server issuer");
+        CertificateBundle client1 = clientChain.issue(CertInfo.builder()
+                .commonName("client")
+                .build());
+        sslContext.init(client1.keyManagers(), new TrustManager[] { new X509TrustManager() {
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+
+            }
+
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+
+            }
+
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        }}, new SecureRandom());
 
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest request = HttpRequest.newBuilder()
@@ -97,11 +118,11 @@ public class MtlsTests {
     @BeforeAll
     public static void setup() throws Exception {
         Provider provider = new BouncyCastleProvider();
-        clientPki = QuickPki.builder()
+        clientPki = CertificateAuthority.builder()
                 .withIssuer("client issuer")
                 .withProvider(provider)
                 .build();
-        serverPki = QuickPki.builder()
+        serverPki = CertificateAuthority.builder()
                 .withIssuer("server issuer")
                 .withProvider(provider)
                 .build();
