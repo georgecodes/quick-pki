@@ -3,6 +3,7 @@
   <component name="ExternalStorageConfigurationManager" enabled="$DEV_MACHINE$" />
   <component name="FrameworkDetectionExcludesConfiguration">
     <file type="web" url="file://$PROJECT_DIR$" />
+    <file type="web" url="file://$PROJECT_DIR$/../../testcontainers-openid" />
   </component>
   <component name="ProjectRootManager" version="2" languageLevel="JDK_11" default="$DEV_MACHINE$" project-jdk-name="11 (2)" project-jdk-type="JavaSDK" />
 </project>

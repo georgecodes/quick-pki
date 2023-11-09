@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="GradleMigrationSettings" migrationVersion="1" />
   <component name="GradleSettings">
     <option name="linkedExternalProjectsSettings">
       <GradleProjectSettings>
@@ -11,7 +12,22 @@
           <set>
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/lib" />
+            <option value="$PROJECT_DIR$/mtls" />
             <option value="$PROJECT_DIR$/stack" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/../../testcontainers-openid" />
+        <option name="gradleHome" value="/usr/local/Cellar/gradle/8.4/libexec" />
+        <option name="gradleJvm" value="#JAVA_HOME" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/../../testcontainers-openid" />
+            <option value="$PROJECT_DIR$/../../testcontainers-openid/image" />
+            <option value="$PROJECT_DIR$/../../testcontainers-openid/sample-spring-app" />
+            <option value="$PROJECT_DIR$/../../testcontainers-openid/tc-op-java" />
           </set>
         </option>
       </GradleProjectSettings>

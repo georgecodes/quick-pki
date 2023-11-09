@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/lib/quick-pki.lib.main.iml" filepath="$PROJECT_DIR$/.idea/modules/lib/quick-pki.lib.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/sample-spring-app/testcontainers-op.sample-spring-app.main.iml" filepath="$PROJECT_DIR$/.idea/modules/sample-spring-app/testcontainers-op.sample-spring-app.main.iml" />
     </modules>
   </component>
 </project>
