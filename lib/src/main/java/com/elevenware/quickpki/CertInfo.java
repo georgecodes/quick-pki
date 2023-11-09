@@ -15,5 +15,7 @@ public class CertInfo {
     private String commonName;
     private LocalDateTime startDate;
     private LocalDateTime endDate;
+    private CertificateBundle issuer;
+    private boolean isCa;
 
 }
