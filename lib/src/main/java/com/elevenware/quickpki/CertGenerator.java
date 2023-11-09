@@ -14,6 +14,7 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import java.math.BigInteger;
 import java.security.*;
 import java.security.cert.X509Certificate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
 
@@ -24,36 +25,50 @@ public class CertGenerator {
         this.provider = provider;
     }
 
-    public CertificateBundle generate(CertInfo info) throws Exception {
+    public CertificateBundle issue(CertInfo info) throws Exception {
         KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA", provider);
         keyPairGenerator.initialize(2048);
 
+        LocalDateTime sd = info.getStartDate();
+        LocalDateTime ed = info.getEndDate();
+        if(sd == null) {
+            sd = LocalDateTime.now();
+        }
+        if(ed == null) {
+            ed = LocalDateTime.now().plusYears(1L);
+        }
         Date startDate = Date
-                .from(info.getStartDate().atZone(ZoneId.systemDefault())
+                .from(sd.atZone(ZoneId.systemDefault())
                         .toInstant());
 
         Date endDate = Date
-                .from(info.getEndDate().atZone(ZoneId.systemDefault())
+                .from(ed.atZone(ZoneId.systemDefault())
                         .toInstant());
 
-        KeyPair rootKeyPair = keyPairGenerator.generateKeyPair();
-        BigInteger rootSerialNum = new BigInteger(Long.toString(new SecureRandom().nextLong()));
+        KeyPair keyPair = keyPairGenerator.generateKeyPair();
+        KeyPair signingKeyPair = keyPair;
+        X500Name issuerName = new X500Name("CN=" + info.getCommonName());
+        X500Name subject = issuerName;
+        CertificateBundle issuer = info.getIssuer();
+        if(issuer != null) {
+            signingKeyPair = issuer.getKeyPair();
+            issuerName = new X500Name(issuer.getCertificate().getSubjectDN().getName());
+        }
+        BigInteger serialNum = new BigInteger(Long.toString(new SecureRandom().nextLong()));
 
-        X500Name rootCertIssuer = new X500Name("CN=" + info.getCommonName());
-        X500Name rootCertSubject = rootCertIssuer;
-        ContentSigner rootCertContentSigner = new JcaContentSignerBuilder("SHA256withRSA")
-                .setProvider(provider).build(rootKeyPair.getPrivate());
-        X509v3CertificateBuilder rootCertBuilder =
-                new JcaX509v3CertificateBuilder(rootCertIssuer, rootSerialNum,
-                        startDate, endDate, rootCertSubject, rootKeyPair.getPublic());
+        ContentSigner certSigner = new JcaContentSignerBuilder("SHA256withRSA")
+                .setProvider(provider).build(signingKeyPair.getPrivate());
+        X509v3CertificateBuilder certBuilder =
+                new JcaX509v3CertificateBuilder(issuerName, serialNum,
+                        startDate, endDate, subject, keyPair.getPublic());
 
-        JcaX509ExtensionUtils rootCertExtUtils = new JcaX509ExtensionUtils();
-        rootCertBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
-        rootCertBuilder.addExtension(Extension.subjectKeyIdentifier, false,
-                rootCertExtUtils.createSubjectKeyIdentifier(rootKeyPair.getPublic()));
+        JcaX509ExtensionUtils extensionUtils = new JcaX509ExtensionUtils();
+        certBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(info.isCa()));
+        certBuilder.addExtension(Extension.subjectKeyIdentifier, false,
+                extensionUtils.createSubjectKeyIdentifier(keyPair.getPublic()));
 
-        X509CertificateHolder rootCertHolder = rootCertBuilder.build(rootCertContentSigner);
-        X509Certificate rootCert = new JcaX509CertificateConverter().setProvider(provider).getCertificate(rootCertHolder);
-        return new CertificateBundle(rootCert, rootKeyPair);
+        X509CertificateHolder certHolder = certBuilder.build(certSigner);
+        X509Certificate cert = new JcaX509CertificateConverter().setProvider(provider).getCertificate(certHolder);
+        return new CertificateBundle(cert, keyPair);
     }
 }
