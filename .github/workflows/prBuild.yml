@@ -13,4 +13,4 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
       - name: Run library tests
-        run: ./gradlew lib:clean lib:test
+        run: ./gradlew quickpki-core:clean quickpki-core:test
