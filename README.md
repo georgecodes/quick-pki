@@ -11,16 +11,16 @@ The latest version of QuickPki can be downloaded from Maven Central.
 
 ```xml
 <dependency>
-    <groupId>com.elevenware</groupId>
-    <artifactId>quickpki</artifactId>
-    <version>0.0.1</version>
+    <groupId>com.elevenware.quickpki</groupId>
+    <artifactId>quickpki-core</artifactId>
+    <version>0.0.2</version>
 </dependency> 
 ```
 
 Using gradle 
     
 ```groovy
-implementation 'com.elevenware:quickpki:0.0.1'
+implementation 'com.elevenware:quickpki:quickpi-core:0.0.2'
 ```
 
 ## Usage
