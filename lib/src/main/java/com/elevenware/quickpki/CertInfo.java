@@ -3,19 +3,14 @@ package com.elevenware.quickpki;
 import lombok.Builder;
 import lombok.Data;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.Calendar;
-import java.util.concurrent.TimeUnit;
+import java.time.Instant;
 
 @Data
 @Builder
 public class CertInfo {
 
-    private String commonName;
-    private LocalDateTime startDate;
-    private LocalDateTime endDate;
-    private CertificateBundle issuer;
-    private boolean isCa;
+    private SubjectName subjectName;
+    private Instant validFrom;
+    private Instant validUntil;
 
 }

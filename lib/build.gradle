@@ -53,7 +53,10 @@ java {
     }
 }
 
+javadoc {
+    destinationDir = layout.buildDirectory.dir("docs/javadoc").get().getAsFile()
+}
+
 tasks.named('test') {
-    // Use JUnit Platform for unit tests.
     useJUnitPlatform()
 }
