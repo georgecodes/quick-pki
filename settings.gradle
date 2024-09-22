@@ -5,3 +5,7 @@ plugins {
 
 rootProject.name = 'quick-pki'
 include('lib')
+
+rootProject.children.each {
+    it.name = ['lib':'quickpki'].get(it.name) ?: it.name
+}
