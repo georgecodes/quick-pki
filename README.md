@@ -4,6 +4,25 @@ Quick Pki is a Java library aimed at providing a small implementation of a Publi
 in unit testing and other scenarios where one needs to generate certificates and keys quickly and easily without relying
 on a full-blown PKI, or including in test code, real certificates which will eventually expire.
 
+##
+Downloading
+
+The latest version of QuickPki can be downloaded from Maven Central. 
+
+```xml
+<dependency>
+    <groupId>com.elevenware</groupId>
+    <artifactId>quickpki</artifactId>
+    <version>0.0.1</version>
+</dependency> 
+```
+
+Using gradle 
+    
+```groovy
+implementation 'com.elevenware:quickpki:0.0.1'
+```
+
 ## Usage
 
 QuickPki aims to be useable with minimal configuration. The following example demonstrates how to issue a certificate and 
