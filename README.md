@@ -1,3 +1,5 @@
+![Maven Central Version](https://img.shields.io/maven-central/v/com.elevenware.quickpki/quickpki-core?color=#008000)
+
 # Quick Pki
 
 Quick Pki is a Java library aimed at providing a small implementation of a Public Key Infrastructure (PKI) for use
