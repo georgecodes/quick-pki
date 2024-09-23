@@ -9,6 +9,13 @@ import java.time.temporal.ChronoUnit;
 
 @Data
 @Builder
+/**
+ * @IssuerInfo
+ *
+ * Metadata which can be provided when creating an issuer
+ *
+ * @see SubjectName
+ */
 public class IssuerInfo {
 
     private SubjectName subjectName;

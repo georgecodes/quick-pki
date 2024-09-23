@@ -5,6 +5,13 @@ import lombok.Data;
 
 @Data
 @Builder
+/**
+ * @SubjectName
+ *
+ * Metadata which models a distinguished name
+ *
+ * @see IssuerInfo
+ */
 public class SubjectName {
 
     private String commonName;
