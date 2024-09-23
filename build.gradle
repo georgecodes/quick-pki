@@ -67,7 +67,6 @@ subprojects {
 
     signing {
         useGpgCmd()
-//        sign configurations.runtimeElements
         sign publishing.publications.maven
     }
 
