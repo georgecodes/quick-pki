@@ -52,6 +52,7 @@ public class SimpleServer implements Runnable {
                  while ((message = in.readLine()) != null) {
                     System.out.println("Received from client: " + message);
                     out.println("Server received: " + message);
+                    out.flush();
                  }
                  System.out.println("done reading from client");
 
@@ -59,6 +60,8 @@ public class SimpleServer implements Runnable {
 
                  out.write(response);
                  out.flush();
+                 clientSocket.getOutputStream().flush();
+                System.out.printf("sent response: %s\n", response);
             } catch (IOException e) {
                 System.err.println("Client connection error: " + e.getMessage());
             }

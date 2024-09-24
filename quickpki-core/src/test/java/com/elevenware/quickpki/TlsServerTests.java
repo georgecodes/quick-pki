@@ -44,7 +44,7 @@ public class TlsServerTests {
         System.out.println(port);
 
         String host = "project.127.0.0.1.nip.io";
-//        host = "localhost";
+        host = "localhost";
         SSLContext clientContext = SSLContext.getInstance("TLS");
 //        clientContext.init(null, null, new SecureRandom());
         clientContext.init(null, serverCert.getIssuer().trustStore(), new SecureRandom());
@@ -57,19 +57,17 @@ public class TlsServerTests {
             out.flush();
             out.close();
 
+
             // Read the response from the server
-        String message;
+        String message = in.readLine();
         while ((message = in.readLine()) != null) {
             System.out.println("Received from server: " + message);
-            out.println("Client received: " + message);
         }
         System.out.println("done reading from server");
         }
      catch (Exception e) {
         e.printStackTrace();
-    }
-    while(true);
-
+        }
     }
 
     @BeforeAll
