@@ -16,13 +16,13 @@ import java.security.cert.X509Certificate;
 public class CertificateBundle {
 
 
-    private CertificateBundle issuer;
+    private final CertificateBundle issuer;
     private final X509Certificate certificate;
     private final JcaX509CertificateHolder holder;
     private final KeyPair keyPair;
 
     public CertificateBundle(CertificateBundle issuer, X509Certificate certificate, KeyPair keyPair) {
-        this.issuer = issuer;
+        this.issuer = (issuer != null) ? issuer : this;
         this.certificate = certificate;
         try {
             this.holder = new JcaX509CertificateHolder(certificate);
@@ -30,9 +30,6 @@ public class CertificateBundle {
             throw new QuickPkiException("Failed to parse certificate", e);
         }
         this.keyPair = keyPair;
-        if(issuer == null) {
-            this.issuer = this;
-        }
     }
 
 
