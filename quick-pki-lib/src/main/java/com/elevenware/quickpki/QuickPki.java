@@ -52,7 +52,7 @@ public class QuickPki {
         this.provider = provider;
         this.issuerInfo = info;
         try {
-            issuer = createIssuer(info);
+            issuer = createIssuer();
         } catch (Exception e) {
             throw new QuickPkiException("Failed to build issuer certificate", e);
         }
@@ -83,6 +83,17 @@ public class QuickPki {
         return serial;
     }
 
+    // KeyUsage.keyEncipherment is RSA key-transport semantics; for EC keys it is
+    // meaningless and some strict validators reject it. Use keyAgreement (ECDH)
+    // for EC, matching the convention that Let's Encrypt etc. follow.
+    private KeyUsage leafKeyUsageFor(KeyPair keyPair) {
+        String algo = keyPair.getPublic().getAlgorithm();
+        if ("EC".equalsIgnoreCase(algo)) {
+            return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyAgreement);
+        }
+        return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment);
+    }
+
 
     public static QuickPki createDefault() {
         return new QuickPki(ensureBouncyCastleProvider(), IssuerInfo.builder().build());
@@ -105,17 +116,17 @@ public class QuickPki {
         return issuer;
     }
 
-    private CertificateBundle createIssuer(IssuerInfo info) throws Exception {
+    private CertificateBundle createIssuer() throws Exception {
         Date startDate = Date
-                .from(info.getValidFrom());
+                .from(issuerInfo.getValidFrom());
 
         Date endDate = Date
-                .from(info.getValidUntil());
+                .from(issuerInfo.getValidUntil());
 
         KeyPair rootKeyPair = newKeyPair();
         BigInteger rootSerialNum = newSerialNumber();
 
-        SubjectName subjectName = Optional.ofNullable(info.getSubjectName())
+        SubjectName subjectName = Optional.ofNullable(issuerInfo.getSubjectName())
                 .orElse(SubjectName.builder()
                         .commonName("Default Root Issuer")
                         .build());
@@ -186,8 +197,7 @@ public class QuickPki {
 
         JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
         certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
-        certificateBuilder.addExtension(Extension.keyUsage, true,
-                new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+        certificateBuilder.addExtension(Extension.keyUsage, true, leafKeyUsageFor(keyPair));
         certificateBuilder.addExtension(Extension.extendedKeyUsage, false,
                 new ExtendedKeyUsage(new KeyPurposeId[] {
                         KeyPurposeId.id_kp_serverAuth,

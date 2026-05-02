@@ -124,6 +124,10 @@ public final class IssuerInfo {
         }
 
         public Builder signatureAlgorithm(String signatureAlgorithm) {
+            if (signatureAlgorithm != null && signatureAlgorithm.isBlank()) {
+                throw new IllegalArgumentException(
+                        "signatureAlgorithm must not be blank; pass null to use the default for the key algorithm");
+            }
             this.signatureAlgorithm = signatureAlgorithm;
             return this;
         }

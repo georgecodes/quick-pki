@@ -31,6 +31,9 @@ public sealed interface KeyAlgorithm permits KeyAlgorithm.Rsa, KeyAlgorithm.Ec {
     record Ec(String curve) implements KeyAlgorithm {
         public Ec {
             Objects.requireNonNull(curve, "curve must not be null");
+            if (curve.isBlank()) {
+                throw new IllegalArgumentException("curve must not be blank");
+            }
         }
 
         @Override
