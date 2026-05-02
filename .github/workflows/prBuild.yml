@@ -10,7 +10,11 @@ jobs:
     steps:
       - name: Checkout project sources
         uses: actions/checkout@v3
-      - name: Setup Gradle
-        uses: gradle/gradle-build-action@v2
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: 'maven'
       - name: Run library tests
-        run: ./gradlew quickpki-core:clean quickpki-core:test
+        run: mvn -pl quick-pki-lib clean test

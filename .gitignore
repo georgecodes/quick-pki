@@ -1,6 +1,11 @@
-# Ignore Gradle project-specific cache directory
-.gradle
+# Maven build output
+target/
 
-# Ignore Gradle build output directory
-build
-.idea
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# OS
+.DS_Store
