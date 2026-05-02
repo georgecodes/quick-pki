@@ -1,5 +1,7 @@
 package com.elevenware.quickpki;
 
+import com.nimbusds.jose.jwk.JWK;
+import com.nimbusds.jose.jwk.JWKSet;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
@@ -9,18 +11,28 @@ import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openssl.PEMParser;
+import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.StringReader;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.security.PrivateKey;
 import java.security.Provider;
 import java.security.Security;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateExpiredException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.CertificateNotYetValidException;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -738,6 +750,181 @@ public class PkiTests {
                         .build()));
         assertTrue(ipEx.getMessage().toLowerCase().contains("subject alternative"),
                 "rejection should mention SAN, got: " + ipEx.getMessage());
+    }
+
+    @Test
+    void certificatePemRoundTrips() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("PEM Leaf").build())
+                .build());
+
+        String pem = leaf.toCertificatePem();
+        assertTrue(pem.startsWith("-----BEGIN CERTIFICATE-----"),
+                "PEM must have the X.509 header, got: " + pem.substring(0, Math.min(80, pem.length())));
+
+        X509Certificate parsed = (X509Certificate) CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(pem.getBytes(StandardCharsets.US_ASCII)));
+        assertEquals(leaf.getCertificate(), parsed);
+    }
+
+    @Test
+    void privateKeyPemRoundTrips() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Key Leaf").build())
+                .build());
+
+        String pem = leaf.toPrivateKeyPem();
+        assertTrue(pem.contains("-----BEGIN PRIVATE KEY-----")
+                        || pem.contains("-----BEGIN RSA PRIVATE KEY-----"),
+                "PEM must declare a private key block, got: " + pem.substring(0, Math.min(80, pem.length())));
+
+        // Parse it back via BC's PEMParser and compare to the original.
+        try (PEMParser parser = new PEMParser(new StringReader(pem))) {
+            Object obj = parser.readObject();
+            PrivateKey roundTripped = new JcaPEMKeyConverter()
+                    .getPrivateKey(((org.bouncycastle.asn1.pkcs.PrivateKeyInfo) obj));
+            assertArrayEquals(leaf.getKeyPair().getPrivate().getEncoded(),
+                    roundTripped.getEncoded());
+        }
+    }
+
+    @Test
+    void chainPemContainsEveryLevelInOrder() throws Exception {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Chain CA").build())
+                .build());
+        CertificateBundle leaf = intermediate.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Chain Leaf").build())
+                .build());
+
+        String pem = leaf.toCertificateChainPem();
+        Collection<? extends Certificate> parsed = CertificateFactory.getInstance("X.509")
+                .generateCertificates(new ByteArrayInputStream(pem.getBytes(StandardCharsets.US_ASCII)));
+
+        assertEquals(3, parsed.size(), "chain PEM must contain leaf + intermediate + root");
+        List<X509Certificate> asList = new ArrayList<>();
+        for (Certificate c : parsed) {
+            asList.add((X509Certificate) c);
+        }
+        assertEquals(leaf.getCertificate(), asList.get(0), "leaf-first ordering");
+        assertEquals(intermediate.getIssuer().getCertificate(), asList.get(1));
+        assertEquals(root.getIssuer().getCertificate(), asList.get(2));
+    }
+
+    @Test
+    void keyStoreRoundTripsThroughPkcs12Bytes() throws Exception {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("KS CA").build())
+                .build());
+        CertificateBundle leaf = intermediate.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("KS Leaf").build())
+                .build());
+
+        char[] password = "changeit".toCharArray();
+        KeyStore ks = leaf.toKeyStore("server", password);
+
+        // Serialise to bytes and read back, the way a TLS-using app would.
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ks.store(out, password);
+
+        KeyStore reread = KeyStore.getInstance("PKCS12");
+        reread.load(new ByteArrayInputStream(out.toByteArray()), password);
+
+        assertTrue(reread.containsAlias("server"));
+        assertTrue(reread.isKeyEntry("server"));
+
+        Certificate[] chain = reread.getCertificateChain("server");
+        assertEquals(3, chain.length, "stored chain must include leaf + intermediate + root");
+        assertEquals(leaf.getCertificate(), chain[0]);
+
+        PrivateKey key = (PrivateKey) reread.getKey("server", password);
+        assertArrayEquals(leaf.getKeyPair().getPrivate().getEncoded(), key.getEncoded());
+    }
+
+    @Test
+    void trustStoreContainsRootOnly() throws Exception {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("TS CA").build())
+                .build());
+
+        KeyStore ts = intermediate.toTrustStore("ca-root");
+
+        assertEquals(1, ts.size(), "truststore must contain exactly the root");
+        assertTrue(ts.isCertificateEntry("ca-root"));
+        assertEquals(root.getIssuer().getCertificate(), ts.getCertificate("ca-root"));
+    }
+
+    @Test
+    void rsaJwkRoundTripsWithFullX5cChain() throws Exception {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("JWK CA").build())
+                .build());
+        CertificateBundle leaf = intermediate.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("JWK Leaf").build())
+                .build());
+
+        JWK jwk = leaf.toJwk();
+
+        // Round-trip through the JWK's JSON representation.
+        JWK parsed = JWK.parse(jwk.toJSONString());
+        assertEquals("RSA", parsed.getKeyType().getValue());
+        assertNull(parsed.toRSAKey().getPrivateExponent(),
+                "exported JWK must NOT include the private key");
+        assertEquals(((RSAPublicKey) leaf.getCertificate().getPublicKey()).getModulus(),
+                parsed.toRSAKey().toRSAPublicKey().getModulus());
+        assertEquals(3, parsed.getX509CertChain().size(),
+                "x5c must include leaf + intermediate + root");
+    }
+
+    @Test
+    void ecJwkExportsAsEcKeyType() {
+        QuickPki pki = QuickPki.create(IssuerInfo.builder()
+                .keyAlgorithm(KeyAlgorithm.ec("secp256r1"))
+                .build());
+        CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("EC JWK Leaf").build())
+                .build());
+
+        JWK jwk = leaf.toJwk();
+        assertEquals("EC", jwk.getKeyType().getValue());
+        assertEquals("P-256", jwk.toECKey().getCurve().getName());
+        assertNull(jwk.toECKey().getD(), "exported JWK must NOT include the private key");
+    }
+
+    @Test
+    void jwkSetCoversTheFullChain() {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki int1 = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Set CA 1").build())
+                .build());
+        QuickPki int2 = int1.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Set CA 2").build())
+                .build());
+
+        JWKSet set = int2.toJwkSet();
+        assertEquals(3, set.getKeys().size(),
+                "JWK Set must include int2 + int1 + root, leaf-first");
+    }
+
+    @Test
+    void exportMethodsRejectNullArguments() {
+        QuickPki pki = QuickPki.createDefault();
+        CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Null Test").build())
+                .build());
+
+        assertThrows(NullPointerException.class,
+                () -> leaf.toKeyStore(null, "changeit".toCharArray()));
+        assertThrows(NullPointerException.class,
+                () -> leaf.toKeyStore("alias", null));
+        assertThrows(NullPointerException.class,
+                () -> pki.toTrustStore(null));
     }
 
     @BeforeAll

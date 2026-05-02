@@ -20,19 +20,28 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
+import com.nimbusds.jose.jwk.JWK;
+import com.nimbusds.jose.jwk.JWKSet;
+
+import java.io.IOException;
 import java.math.BigInteger;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
 import java.security.SecureRandom;
 import java.security.Security;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.security.spec.ECGenParameterSpec;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -145,6 +154,42 @@ public class QuickPki {
     public CertificateBundle getIssuer() {
         return issuer;
     }
+
+    // PKCS12 truststore containing the chain's root cert as a
+    // TrustedCertificateEntry under `alias`. Suitable for handing to
+    // SSLContext as a trust source on the client side.
+    public KeyStore toTrustStore(String alias) {
+        Objects.requireNonNull(alias, "alias must not be null");
+        try {
+            KeyStore ts = KeyStore.getInstance("PKCS12");
+            ts.load(null, null);
+            List<X509Certificate> chain = issuer.getCertificateChain();
+            X509Certificate root = chain.get(chain.size() - 1);
+            ts.setCertificateEntry(alias, root);
+            return ts;
+        } catch (KeyStoreException | IOException | NoSuchAlgorithmException | CertificateException e) {
+            throw new QuickPkiException("Failed to build PKCS12 TrustStore", e);
+        }
+    }
+
+    // JWK Set containing the public key (with x5c) of every cert in the chain
+    // from this PKI's issuer up to the root, leaf-first. Useful for serving as
+    // the JWKS endpoint of a mock OIDC issuer in tests.
+    public JWKSet toJwkSet() {
+        List<JWK> keys = new ArrayList<>();
+        CertificateBundle current = issuer;
+        for (int depth = 0; depth < MAX_CHAIN_DEPTH; depth++) {
+            keys.add(current.toJwk());
+            if (current.getIssuer() == current) {
+                return new JWKSet(keys);
+            }
+            current = current.getIssuer();
+        }
+        throw new QuickPkiException(
+                "Certificate chain exceeds " + MAX_CHAIN_DEPTH + " levels (possible cycle)");
+    }
+
+    private static final int MAX_CHAIN_DEPTH = 64;
 
     private CertificateBundle createIssuer() throws Exception {
         Date startDate = Date
