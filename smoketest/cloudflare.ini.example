@@ -1,0 +1,11 @@
+# Template for the Cloudflare credentials file used by certbot's
+# dns-cloudflare authenticator. Copy this file to `cloudflare.ini`, fill in
+# your API token, and tighten its permissions so certbot will accept it:
+#
+#   cp cloudflare.ini.example cloudflare.ini
+#   chmod 600 cloudflare.ini
+#
+# `cloudflare.ini` is gitignored so a real token never ends up in version
+# control.
+
+dns_cloudflare_api_token = <insert your Cloudflare API token here>

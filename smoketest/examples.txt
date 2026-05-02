@@ -1,0 +1,9 @@
+# Example certbot invocations against the local quick-pki ACME server.
+# Replace <hostname> with the identifier you want to issue for.
+
+# DNS-01 (Cloudflare): copy cloudflare.ini.example to cloudflare.ini, fill in
+# your token, then `chmod 600 cloudflare.ini` so certbot will accept it.
+certbot --config ./cli.ini certonly -d <hostname>
+
+# HTTP-01 (standalone): requires binding port 80, so run with sudo.
+sudo certbot --config ./cli-http.ini certonly -d <hostname>

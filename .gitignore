@@ -13,3 +13,7 @@ dist/
 
 # OS
 .DS_Store
+
+# Smoketest secrets
+smoketest/cloudflare.ini
+smoketest/certbot/

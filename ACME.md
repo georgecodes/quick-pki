@@ -2,7 +2,11 @@
 
 ## Status
 
-Conceptual design. No implementation decision yet.
+Accepted and implemented. The decisions captured in this ADR are realised by
+the `quick-pki-acme-server` Maven module (Javalin + Postgres/Liquibase) and
+the `quick-pki-admin` Go BFF + Vue console. The remainder of this document is
+preserved as the original design rationale; for current behaviour, consult
+the modules and their READMEs.
 
 ## Context
 

@@ -176,8 +176,30 @@ public class QuickPki {
         return new QuickPki(ensureBouncyCastleProvider(), issuerInfo);
     }
 
+    /**
+     * Rehydrates a {@link QuickPki} around an already-built issuer bundle so a
+     * service can keep its CA identity stable across restarts. The bundle must
+     * carry the issuer's signing key: this PKI will use {@code
+     * issuerBundle.getKeyPair().getPrivate()} on every issuance, and we'd
+     * rather fail fast here than NPE deep inside BouncyCastle later.
+     *
+     * @throws NullPointerException     if {@code issuerInfo} or {@code issuerBundle} is null
+     * @throws IllegalArgumentException if the bundle has no key pair / private key,
+     *                                  or its certificate is not a CA
+     */
     public static QuickPki fromIssuer(IssuerInfo issuerInfo, CertificateBundle issuerBundle) {
         Objects.requireNonNull(issuerInfo, "issuerInfo must not be null");
+        Objects.requireNonNull(issuerBundle, "issuerBundle must not be null");
+        KeyPair keyPair = issuerBundle.getKeyPair();
+        if (keyPair == null || keyPair.getPrivate() == null) {
+            throw new IllegalArgumentException(
+                    "issuerBundle must carry a private key; cannot sign certificates without one");
+        }
+        X509Certificate cert = issuerBundle.getCertificate();
+        if (cert.getBasicConstraints() < 0) {
+            throw new IllegalArgumentException(
+                    "issuerBundle certificate is not a CA (basicConstraints cA=false or absent)");
+        }
         return new QuickPki(ensureBouncyCastleProvider(), issuerInfo, issuerBundle);
     }
 
@@ -288,6 +310,18 @@ public class QuickPki {
         }
     }
 
+    /**
+     * Issues a leaf certificate that binds {@code publicKey} to the subject in
+     * {@code info}. Intended for CSR-style flows (eg. ACME) where the subscriber
+     * generated the key pair and only the public half ever leaves their host.
+     * <p>
+     * The returned {@link CertificateBundle} therefore has a {@code KeyPair}
+     * whose private half is {@code null}. Helpers that need the private key
+     * ({@link CertificateBundle#toPrivateKeyPem()}, {@link
+     * CertificateBundle#toKeyStore(String, char[])}) will throw
+     * {@link QuickPkiException} on such a bundle - serve the cert/chain PEM
+     * back to the subscriber and let them pair it with the key they retained.
+     */
     public CertificateBundle issueCertificate(CertInfo info, PublicKey publicKey) {
         Objects.requireNonNull(publicKey, "publicKey must not be null");
         try {

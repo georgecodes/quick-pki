@@ -137,9 +137,21 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   a.secureCookies(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// secureCookies decides whether to set the Secure flag on session cookies. We
+// mark them Secure whenever the request is itself TLS or when the configured
+// public URL is HTTPS - this keeps local plain-HTTP development workable
+// without ever leaving the flag off in a real https deployment.
+func (a *app) secureCookies(r *http.Request) bool {
+	if r != nil && r.TLS != nil {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(a.cfg.PublicURL), "https://")
 }
 
 func (a *app) summary(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +186,7 @@ func (a *app) accounts(w http.ResponseWriter, r *http.Request) {
 		group by a.id, a.key_thumbprint, a.contact_json, a.status, a.terms_agreed, a.created_at
 		order by a.created_at desc`)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "accounts.query", err)
 		return
 	}
 	defer rows.Close()
@@ -186,7 +198,7 @@ func (a *app) accounts(w http.ResponseWriter, r *http.Request) {
 		var lastOrder sql.NullTime
 		if err := rows.Scan(&dto.ID, &dto.KeyThumbprint, &contactJSON, &dto.Status, &dto.TermsAgreed,
 			&dto.CreatedAt, &dto.OrderCount, &lastOrder); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			a.serverError(w, http.StatusInternalServerError, "accounts.scan", err)
 			return
 		}
 		dto.Contact = jsonList(contactJSON)
@@ -196,7 +208,7 @@ func (a *app) accounts(w http.ResponseWriter, r *http.Request) {
 		accounts = append(accounts, dto)
 	}
 	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "accounts.rows", err)
 		return
 	}
 	writeJSON(w, accounts)
@@ -222,7 +234,7 @@ func (a *app) orders(w http.ResponseWriter, r *http.Request) {
 		group by o.id, o.account_id, a.key_thumbprint, o.status, o.expires_at, o.created_at, o.identifiers_json, o.certificate_pem
 		order by o.created_at desc`)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "orders.query", err)
 		return
 	}
 	defer rows.Close()
@@ -231,13 +243,13 @@ func (a *app) orders(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		dto, err := scanOrder(rows)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			a.serverError(w, http.StatusInternalServerError, "orders.scan", err)
 			return
 		}
 		orders = append(orders, dto)
 	}
 	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "orders.rows", err)
 		return
 	}
 	writeJSON(w, orders)
@@ -266,7 +278,7 @@ func (a *app) orderDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "orderDetail.scan", err)
 		return
 	}
 
@@ -276,7 +288,7 @@ func (a *app) orderDetail(w http.ResponseWriter, r *http.Request) {
 		where order_id = $1
 		order by identifier_value`, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "orderDetail.authz.query", err)
 		return
 	}
 	defer authzRows.Close()
@@ -286,18 +298,18 @@ func (a *app) orderDetail(w http.ResponseWriter, r *http.Request) {
 		var authz authorizationDTO
 		if err := authzRows.Scan(&authz.ID, &authz.IdentifierType, &authz.IdentifierValue,
 			&authz.Wildcard, &authz.Status, &authz.ExpiresAt); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			a.serverError(w, http.StatusInternalServerError, "orderDetail.authz.scan", err)
 			return
 		}
 		authz.Challenges, err = a.challenges(r.Context(), authz.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			a.serverError(w, http.StatusInternalServerError, "orderDetail.challenges", err)
 			return
 		}
 		authzs = append(authzs, authz)
 	}
 	if err := authzRows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "orderDetail.authz.rows", err)
 		return
 	}
 	writeJSON(w, map[string]any{"order": dto, "authorizations": authzs})
@@ -340,7 +352,7 @@ func (a *app) ca(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "ca.info", err)
 		return
 	}
 	writeJSON(w, info)
@@ -354,24 +366,27 @@ func (a *app) rotateCA(w http.ResponseWriter, r *http.Request) {
 	endpoint := strings.TrimRight(a.cfg.ACMEAdminURL, "/") + "/admin/ca/rotate"
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, nil)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "rotateCA.request", err)
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+a.cfg.ACMEAdminToken)
 	resp, err := a.http.Do(req)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		a.serverError(w, http.StatusBadGateway, "rotateCA.upstream", err)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		writeError(w, http.StatusBadGateway, strings.TrimSpace(string(body)))
+		a.log.Error("rotateCA upstream rejected request",
+			"status", resp.StatusCode,
+			"body", strings.TrimSpace(string(body)))
+		writeError(w, http.StatusBadGateway, "upstream service error")
 		return
 	}
 	info, err := a.caInfo(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.serverError(w, http.StatusInternalServerError, "rotateCA.refresh", err)
 		return
 	}
 	writeJSON(w, info)
@@ -500,6 +515,28 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": message})
+}
+
+// serverError logs the underlying error with operation context and returns a
+// generic, user-safe message to the caller. This keeps internal details
+// (database errors, upstream URLs, internal hostnames) out of API responses
+// while still leaving the operator a breadcrumb in the server log.
+func (a *app) serverError(w http.ResponseWriter, status int, op string, err error) {
+	a.log.Error("request failed", "op", op, "status", status, "err", err)
+	writeError(w, status, genericMessageFor(status))
+}
+
+func genericMessageFor(status int) string {
+	switch {
+	case status == http.StatusBadGateway:
+		return "upstream service error"
+	case status == http.StatusServiceUnavailable:
+		return "service unavailable"
+	case status >= 500:
+		return "internal server error"
+	default:
+		return http.StatusText(status)
+	}
 }
 
 func loadConfig() config {

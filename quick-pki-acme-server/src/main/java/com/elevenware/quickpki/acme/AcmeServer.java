@@ -58,8 +58,15 @@ final class AcmeServer {
             routes(javalinConfig.routes);
             javalinConfig.routes.after(this::logRequest);
             javalinConfig.routes.exception(AcmeException.class, this::handleAcmeException);
-            javalinConfig.routes.exception(Exception.class, (e, ctx) -> handleAcmeException(
-                    new AcmeException(500, "serverInternal", e.getMessage()), ctx));
+            // Unexpected exceptions: log the real message + stack trace
+            // server-side and return a generic problem document so we don't
+            // leak internal details (stack frames, JDBC errors, internal
+            // hostnames) to ACME clients.
+            javalinConfig.routes.exception(Exception.class, (e, ctx) -> {
+                LOG.error("Unhandled exception serving ACME request path={}", ctx.path(), e);
+                handleAcmeException(
+                        new AcmeException(500, "serverInternal", "internal server error"), ctx);
+            });
         });
         return app;
     }

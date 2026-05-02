@@ -1,1 +1,0 @@
-certbot --config ./cli-http.ini certonly -d  certbot --config ./cli.ini certonly  -

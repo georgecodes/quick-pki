@@ -160,6 +160,14 @@ interface AcmeMapper {
             """)
     int markOrderReadyIfPending(UUID orderId);
 
+    @Update("""
+            update acme_orders
+            set status = 'invalid'
+            where id = #{orderId}
+              and status in ('pending', 'ready', 'processing')
+            """)
+    int markOrderInvalidIfActive(UUID orderId);
+
     @Insert("""
             insert into acme_authorizations (
                 id,

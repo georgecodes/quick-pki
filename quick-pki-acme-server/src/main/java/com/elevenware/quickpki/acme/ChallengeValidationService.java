@@ -55,7 +55,8 @@ final class ChallengeValidationService {
             host = "[" + host + "]";
         }
         URI uri = URI.create("http://" + host + "/.well-known/acme-challenge/" + token);
-        for (int attempt = 0; attempt < config.challengeAttempts(); attempt++) {
+        int attempts = config.challengeAttempts();
+        for (int attempt = 0; attempt < attempts; attempt++) {
             try {
                 HttpRequest request = HttpRequest.newBuilder(uri)
                         .timeout(config.challengeTimeout())
@@ -69,6 +70,12 @@ final class ChallengeValidationService {
                 }
             } catch (Exception ignored) {
                 LOG.debug("HTTP-01 validation attempt failed attempt={} uri={}", attempt + 1, uri, ignored);
+            }
+            // Back off on every failed attempt (non-2xx, body mismatch, or
+            // network exception) so retries don't hot-loop the target host
+            // when the challenge isn't yet available. Skip the pause after
+            // the final attempt - we're about to give up anyway.
+            if (attempt < attempts - 1) {
                 pauseBeforeRetry();
             }
         }
@@ -78,7 +85,8 @@ final class ChallengeValidationService {
     private boolean validateDns01(String identifier, String keyAuthorization) {
         String name = "_acme-challenge." + (identifier.startsWith("*.") ? identifier.substring(2) : identifier);
         String expected = dnsDigest(keyAuthorization);
-        for (int attempt = 0; attempt < config.challengeAttempts(); attempt++) {
+        int attempts = config.challengeAttempts();
+        for (int attempt = 0; attempt < attempts; attempt++) {
             try {
                 if (txtRecords(name).contains(expected)) {
                     LOG.debug("DNS-01 TXT validation matched name={}", name);
@@ -91,6 +99,10 @@ final class ChallengeValidationService {
                 }
             } catch (Exception ignored) {
                 LOG.debug("DNS-01 validation attempt failed attempt={} name={}", attempt + 1, name, ignored);
+            }
+            // Back off on every failed attempt (no matching TXT yet, or DNS
+            // lookup failure) so retries don't hammer the resolver.
+            if (attempt < attempts - 1) {
                 pauseBeforeRetry();
             }
         }

@@ -100,7 +100,7 @@ async function login() {
       client_id: config.value.clientId,
       scopes: config.value.scopes,
       flow: 'auth_code',
-      use_pkce: false
+      use_pkce: true
     })
     window.location.href = response.redirect
   } catch (err) {

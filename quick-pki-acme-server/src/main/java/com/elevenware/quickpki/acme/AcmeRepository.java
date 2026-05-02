@@ -132,8 +132,27 @@ final class AcmeRepository {
         }, "Failed to mark challenge valid");
     }
 
+    // RFC 8555 §7.1.6: when a challenge moves to "invalid" the surrounding
+    // authorization (and any pending order it belongs to) must also become
+    // "invalid", otherwise admin tooling and clients see contradictory state
+    // (failed challenge under a still-pending authorization). Do all three
+    // updates in one transaction so observers never catch the in-between.
     void markChallengeInvalid(UUID challengeId, String errorJson) {
-        write(mapper -> mapper.markChallengeInvalid(challengeId, errorJson));
+        transaction(mapper -> {
+            if (mapper.markChallengeInvalid(challengeId, errorJson) == 0) {
+                throw new AcmeException(404, "malformed", "challenge not found");
+            }
+            UUID authzId = mapper.selectAuthorizationIdForChallenge(challengeId);
+            if (authzId == null) {
+                return null;
+            }
+            mapper.updateAuthorizationStatus(authzId, "invalid");
+            UUID orderId = mapper.selectOrderIdForAuthorization(authzId);
+            if (orderId != null) {
+                mapper.markOrderInvalidIfActive(orderId);
+            }
+            return null;
+        }, "Failed to mark challenge invalid");
     }
 
     void finalizeOrder(UUID orderId, byte[] csrDer, String certificatePem, String chainPem) {
