@@ -4,7 +4,12 @@ import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
 import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
+import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
@@ -26,7 +31,9 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -103,6 +110,8 @@ public class QuickPki {
 
         JcaX509ExtensionUtils rootCertExtUtils = new JcaX509ExtensionUtils();
         rootCertBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
+        rootCertBuilder.addExtension(Extension.keyUsage, true,
+                new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
         rootCertBuilder.addExtension(Extension.subjectKeyIdentifier, false,
                 rootCertExtUtils.createSubjectKeyIdentifier(rootKeyPair.getPublic()));
 
@@ -155,16 +164,42 @@ public class QuickPki {
                 new JcaX509v3CertificateBuilder(issuerSubject, serialNum,
                         startDate, endDate, subject, keyPair.getPublic());
 
-        JcaX509ExtensionUtils rootCertExtUtils = new JcaX509ExtensionUtils();
+        JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
         certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+        certificateBuilder.addExtension(Extension.keyUsage, true,
+                new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+        certificateBuilder.addExtension(Extension.extendedKeyUsage, false,
+                new ExtendedKeyUsage(new KeyPurposeId[] {
+                        KeyPurposeId.id_kp_serverAuth,
+                        KeyPurposeId.id_kp_clientAuth
+                }));
         certificateBuilder.addExtension(Extension.subjectKeyIdentifier, false,
-                rootCertExtUtils.createSubjectKeyIdentifier(keyPair.getPublic()));
+                extUtils.createSubjectKeyIdentifier(keyPair.getPublic()));
+        certificateBuilder.addExtension(Extension.authorityKeyIdentifier, false,
+                extUtils.createAuthorityKeyIdentifier(issuer.getCertificate()));
 
-
+        GeneralNames sans = buildSubjectAlternativeNames(info);
+        if (sans != null) {
+            certificateBuilder.addExtension(Extension.subjectAlternativeName, false, sans);
+        }
 
         X509CertificateHolder rootCertHolder = certificateBuilder.build(rootCertContentSigner);
         X509Certificate cert = new JcaX509CertificateConverter().setProvider(provider).getCertificate(rootCertHolder);
         return new CertificateBundle(this.issuer, cert, keyPair);
+    }
+
+    private GeneralNames buildSubjectAlternativeNames(CertInfo info) {
+        List<GeneralName> names = new ArrayList<>();
+        for (String dnsName : info.getDnsNames()) {
+            names.add(new GeneralName(GeneralName.dNSName, dnsName));
+        }
+        for (String ipAddress : info.getIpAddresses()) {
+            names.add(new GeneralName(GeneralName.iPAddress, ipAddress));
+        }
+        if (names.isEmpty()) {
+            return null;
+        }
+        return new GeneralNames(names.toArray(new GeneralName[0]));
     }
 
     private X500Name buildX500Name(SubjectName info) {

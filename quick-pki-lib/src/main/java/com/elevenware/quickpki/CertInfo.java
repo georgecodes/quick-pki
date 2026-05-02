@@ -1,6 +1,8 @@
 package com.elevenware.quickpki;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 public final class CertInfo {
@@ -8,11 +10,15 @@ public final class CertInfo {
     private final SubjectName subjectName;
     private final Instant validFrom;
     private final Instant validUntil;
+    private final List<String> dnsNames;
+    private final List<String> ipAddresses;
 
     private CertInfo(Builder builder) {
         this.subjectName = builder.subjectName;
         this.validFrom = builder.validFrom;
         this.validUntil = builder.validUntil;
+        this.dnsNames = List.copyOf(builder.dnsNames);
+        this.ipAddresses = List.copyOf(builder.ipAddresses);
     }
 
     public static Builder builder() {
@@ -31,18 +37,28 @@ public final class CertInfo {
         return validUntil;
     }
 
+    public List<String> getDnsNames() {
+        return dnsNames;
+    }
+
+    public List<String> getIpAddresses() {
+        return ipAddresses;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof CertInfo that)) return false;
         return Objects.equals(subjectName, that.subjectName)
                 && Objects.equals(validFrom, that.validFrom)
-                && Objects.equals(validUntil, that.validUntil);
+                && Objects.equals(validUntil, that.validUntil)
+                && Objects.equals(dnsNames, that.dnsNames)
+                && Objects.equals(ipAddresses, that.ipAddresses);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(subjectName, validFrom, validUntil);
+        return Objects.hash(subjectName, validFrom, validUntil, dnsNames, ipAddresses);
     }
 
     @Override
@@ -51,6 +67,8 @@ public final class CertInfo {
                 + "subjectName=" + subjectName
                 + ", validFrom=" + validFrom
                 + ", validUntil=" + validUntil
+                + ", dnsNames=" + dnsNames
+                + ", ipAddresses=" + ipAddresses
                 + '}';
     }
 
@@ -58,6 +76,8 @@ public final class CertInfo {
         private SubjectName subjectName;
         private Instant validFrom;
         private Instant validUntil;
+        private final List<String> dnsNames = new ArrayList<>();
+        private final List<String> ipAddresses = new ArrayList<>();
 
         private Builder() {
         }
@@ -74,6 +94,16 @@ public final class CertInfo {
 
         public Builder validUntil(Instant validUntil) {
             this.validUntil = validUntil;
+            return this;
+        }
+
+        public Builder dnsName(String dnsName) {
+            this.dnsNames.add(dnsName);
+            return this;
+        }
+
+        public Builder ipAddress(String ipAddress) {
+            this.ipAddresses.add(ipAddress);
             return this;
         }
 

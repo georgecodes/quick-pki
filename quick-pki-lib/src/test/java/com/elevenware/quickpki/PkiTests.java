@@ -2,6 +2,11 @@ package com.elevenware.quickpki;
 
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
+import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
+import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.junit.jupiter.api.BeforeAll;
@@ -18,6 +23,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -27,6 +33,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -296,6 +303,134 @@ public class PkiTests {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    // RFC 5280 §4.2.1.3: a CA MUST have keyCertSign asserted; cRLSign is
+    // standard for the same. KeyUsage bit positions: digitalSignature=0,
+    // nonRepudiation=1, keyEncipherment=2, dataEncipherment=3,
+    // keyAgreement=4, keyCertSign=5, cRLSign=6.
+    @Test
+    void rootCertificateHasCaKeyUsage() {
+        QuickPki pki = QuickPki.createDefault();
+
+        boolean[] keyUsage = pki.getIssuer().getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "root must have a KeyUsage extension");
+        assertTrue(keyUsage[5], "root must assert keyCertSign");
+        assertTrue(keyUsage[6], "root must assert cRLSign");
+        assertFalse(keyUsage[0], "root should not assert digitalSignature");
+    }
+
+    @Test
+    void leafCertificateHasEndEntityKeyUsage() {
+        QuickPki pki = QuickPki.createDefault();
+
+        boolean[] keyUsage = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .build())
+                .getCertificate().getKeyUsage();
+
+        assertNotNull(keyUsage, "leaf must have a KeyUsage extension");
+        assertTrue(keyUsage[0], "leaf must assert digitalSignature");
+        assertTrue(keyUsage[2], "leaf must assert keyEncipherment");
+        assertFalse(keyUsage[5], "leaf must NOT assert keyCertSign");
+    }
+
+    @Test
+    void leafCertificateHasServerAndClientExtendedKeyUsage() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        List<String> eku = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .build())
+                .getCertificate().getExtendedKeyUsage();
+
+        assertNotNull(eku, "leaf must have an ExtendedKeyUsage extension");
+        assertTrue(eku.contains(KeyPurposeId.id_kp_serverAuth.getId()),
+                "leaf must include serverAuth EKU");
+        assertTrue(eku.contains(KeyPurposeId.id_kp_clientAuth.getId()),
+                "leaf must include clientAuth EKU");
+    }
+
+    // Path-building tools (PKIX, openssl, browsers) match the leaf's
+    // AuthorityKeyIdentifier against the issuer's SubjectKeyIdentifier.
+    @Test
+    void leafAuthorityKeyIdentifierMatchesIssuerSubjectKeyIdentifier() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        X509Certificate root = pki.getIssuer().getCertificate();
+        X509Certificate leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .build())
+                .getCertificate();
+
+        X509CertificateHolder rootHolder = new X509CertificateHolder(root.getEncoded());
+        X509CertificateHolder leafHolder = new X509CertificateHolder(leaf.getEncoded());
+        SubjectKeyIdentifier ski = SubjectKeyIdentifier.fromExtensions(rootHolder.getExtensions());
+        AuthorityKeyIdentifier aki = AuthorityKeyIdentifier.fromExtensions(leafHolder.getExtensions());
+
+        assertNotNull(ski, "root must have a SubjectKeyIdentifier");
+        assertNotNull(aki, "leaf must have an AuthorityKeyIdentifier");
+        assertArrayEquals(ski.getKeyIdentifier(), aki.getKeyIdentifier(),
+                "leaf's AKI must match root's SKI for path building");
+    }
+
+    // Modern TLS verifiers (browsers, OkHttp, JDK >=11) ignore CN entirely
+    // and require the hostname to match a SubjectAlternativeName entry.
+    @Test
+    void leafIncludesDnsNamesInSubjectAlternativeName() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        X509Certificate leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .dnsName("example.com")
+                .dnsName("www.example.com")
+                .build())
+                .getCertificate();
+
+        Set<String> dnsNames = new HashSet<>();
+        Collection<List<?>> sans = leaf.getSubjectAlternativeNames();
+        assertNotNull(sans, "leaf with dnsName entries must have a SAN extension");
+        for (List<?> entry : sans) {
+            if (((Integer) entry.get(0)) == GeneralName.dNSName) {
+                dnsNames.add((String) entry.get(1));
+            }
+        }
+        assertTrue(dnsNames.contains("example.com"));
+        assertTrue(dnsNames.contains("www.example.com"));
+    }
+
+    @Test
+    void leafIncludesIpAddressesInSubjectAlternativeName() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        X509Certificate leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .ipAddress("127.0.0.1")
+                .build())
+                .getCertificate();
+
+        Collection<List<?>> sans = leaf.getSubjectAlternativeNames();
+        assertNotNull(sans, "leaf with ipAddress entries must have a SAN extension");
+        boolean foundIp = false;
+        for (List<?> entry : sans) {
+            if (((Integer) entry.get(0)) == GeneralName.iPAddress
+                    && "127.0.0.1".equals(entry.get(1))) {
+                foundIp = true;
+            }
+        }
+        assertTrue(foundIp, "expected SAN entry for IP 127.0.0.1");
+    }
+
+    @Test
+    void leafWithoutSanFieldsHasNoSanExtension() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        X509Certificate leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .build())
+                .getCertificate();
+
+        assertNull(leaf.getSubjectAlternativeNames(),
+                "no dnsName/ipAddress provided should mean no SAN extension");
     }
 
     @BeforeAll
