@@ -149,16 +149,21 @@ public class PkiTests {
         Date notAfter = issuerCert.getNotAfter();
         assertEquals(end, notAfter.toInstant());
 
-        now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        // intIssueCertificate calls Instant.now() to set the leaf's validFrom,
+        // then adds the issuer's defaultLifespan (1 minute here). We can't see
+        // that internal Instant.now(); compare against a window centred on
+        // 'expected' to avoid second-boundary flakiness on slow CI workers.
+        Instant expected = Instant.now().plus(1, ChronoUnit.MINUTES);
         CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
                 .subjectName(SubjectName.builder()
                         .commonName("My First Certificate").build())
                 .build());
 
         X509Certificate leafCert = leaf.getCertificate();
-        Date leafNotAfter = leafCert.getNotAfter();
-        assertEquals(now.plus(1, ChronoUnit.MINUTES), leafNotAfter.toInstant());
-
+        Instant leafNotAfter = leafCert.getNotAfter().toInstant();
+        long deltaSeconds = Math.abs(Duration.between(expected, leafNotAfter).getSeconds());
+        assertTrue(deltaSeconds <= 2,
+                "leaf notAfter should be within 2s of " + expected + ", was " + leafNotAfter);
     }
 
     @Test
@@ -925,6 +930,47 @@ public class PkiTests {
                 () -> leaf.toKeyStore("alias", null));
         assertThrows(NullPointerException.class,
                 () -> pki.toTrustStore(null));
+    }
+
+    @Test
+    void issuerInfoRejectsInvertedValidityRange() {
+        Instant t = Instant.parse("2030-01-01T00:00:00Z");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> IssuerInfo.builder()
+                        .validFrom(t.plus(1, ChronoUnit.HOURS))
+                        .validUntil(t)
+                        .build());
+        assertTrue(ex.getMessage().contains("validFrom"),
+                "rejection should mention validFrom, got: " + ex.getMessage());
+    }
+
+    @Test
+    void certInfoRejectsInvertedValidityRange() {
+        Instant t = Instant.parse("2030-01-01T00:00:00Z");
+        assertThrows(IllegalArgumentException.class,
+                () -> CertInfo.builder()
+                        .validFrom(t.plus(1, ChronoUnit.HOURS))
+                        .validUntil(t)
+                        .build());
+    }
+
+    @Test
+    void issueCertificateRejectsValidUntilInPastWhenValidFromDefaults() {
+        QuickPki pki = QuickPki.createDefault();
+
+        // validFrom unset (defaults to now()), validUntil in the distant past:
+        // the resolved range inverts. The eager builder check can't see this -
+        // it only fires when both bounds are explicit - so the late guard in
+        // QuickPki.resolveValidity() must catch it. The wrap path turns the
+        // IllegalArgumentException into a QuickPkiException whose cause we
+        // assert on.
+        QuickPkiException ex = assertThrows(QuickPkiException.class,
+                () -> pki.issueCertificate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Past").build())
+                        .validUntil(Instant.parse("2000-01-01T00:00:00Z"))
+                        .build()));
+        assertTrue(ex.getCause() instanceof IllegalArgumentException,
+                "underlying cause must be IllegalArgumentException, was " + ex.getCause());
     }
 
     @BeforeAll

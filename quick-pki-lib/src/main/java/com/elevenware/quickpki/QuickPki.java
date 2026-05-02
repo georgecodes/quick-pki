@@ -93,11 +93,18 @@ public class QuickPki {
     }
 
     // Resolves a CertInfo's start/end Instants, defaulting to now() and
-    // start+issuerInfo.defaultLifespan respectively when omitted.
+    // start+issuerInfo.defaultLifespan respectively when omitted. Catches
+    // the case where the caller pinned only one bound to a value that
+    // would invert the resolved range (eg. validUntil in the past with no
+    // explicit validFrom).
     private Validity resolveValidity(CertInfo info) {
         Instant start = info.getValidFrom() != null ? info.getValidFrom() : Instant.now();
         Instant end = info.getValidUntil() != null ? info.getValidUntil()
                 : start.plus(issuerInfo.getDefaultLifespan());
+        if (start.isAfter(end)) {
+            throw new IllegalArgumentException(
+                    "validFrom (" + start + ") must not be after validUntil (" + end + ")");
+        }
         return new Validity(start, end);
     }
 
