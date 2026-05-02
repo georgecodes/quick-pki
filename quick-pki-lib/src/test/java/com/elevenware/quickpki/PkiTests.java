@@ -2,7 +2,6 @@ package com.elevenware.quickpki;
 
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.RSAKey;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
@@ -22,6 +21,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.StringReader;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Provider;
@@ -764,7 +764,7 @@ public class PkiTests {
                 "PEM must have the X.509 header, got: " + pem.substring(0, Math.min(80, pem.length())));
 
         X509Certificate parsed = (X509Certificate) CertificateFactory.getInstance("X.509")
-                .generateCertificate(new ByteArrayInputStream(pem.getBytes()));
+                .generateCertificate(new ByteArrayInputStream(pem.getBytes(StandardCharsets.US_ASCII)));
         assertEquals(leaf.getCertificate(), parsed);
     }
 
@@ -802,7 +802,7 @@ public class PkiTests {
 
         String pem = leaf.toCertificateChainPem();
         Collection<? extends Certificate> parsed = CertificateFactory.getInstance("X.509")
-                .generateCertificates(new ByteArrayInputStream(pem.getBytes()));
+                .generateCertificates(new ByteArrayInputStream(pem.getBytes(StandardCharsets.US_ASCII)));
 
         assertEquals(3, parsed.size(), "chain PEM must contain leaf + intermediate + root");
         List<X509Certificate> asList = new ArrayList<>();

@@ -178,15 +178,18 @@ public class QuickPki {
     public JWKSet toJwkSet() {
         List<JWK> keys = new ArrayList<>();
         CertificateBundle current = issuer;
-        while (true) {
+        for (int depth = 0; depth < MAX_CHAIN_DEPTH; depth++) {
             keys.add(current.toJwk());
             if (current.getIssuer() == current) {
-                break;
+                return new JWKSet(keys);
             }
             current = current.getIssuer();
         }
-        return new JWKSet(keys);
+        throw new QuickPkiException(
+                "Certificate chain exceeds " + MAX_CHAIN_DEPTH + " levels (possible cycle)");
     }
+
+    private static final int MAX_CHAIN_DEPTH = 64;
 
     private CertificateBundle createIssuer() throws Exception {
         Date startDate = Date

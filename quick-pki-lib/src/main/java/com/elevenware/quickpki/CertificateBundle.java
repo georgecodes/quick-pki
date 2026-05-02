@@ -32,6 +32,12 @@ import java.util.Objects;
 
 public class CertificateBundle {
 
+    // Hard cap on chain walks. Real PKI chains are 2-5 levels deep; 64 is far
+    // beyond anything legitimate and ensures we fail fast rather than hang if
+    // a caller ever constructs a pathological bundle graph (today the final
+    // issuer field plus Java's evaluation order make cycles unconstructible
+    // through the normal API, but reflection or future API changes could).
+    private static final int MAX_CHAIN_DEPTH = 64;
 
     private final CertificateBundle issuer;
     private final X509Certificate certificate;
@@ -89,14 +95,15 @@ public class CertificateBundle {
     public List<X509Certificate> getCertificateChain() {
         List<X509Certificate> chain = new ArrayList<>();
         CertificateBundle current = this;
-        while (true) {
+        for (int depth = 0; depth < MAX_CHAIN_DEPTH; depth++) {
             chain.add(current.certificate);
             if (current.issuer == current) {
-                break;
+                return List.copyOf(chain);
             }
             current = current.issuer;
         }
-        return List.copyOf(chain);
+        throw new QuickPkiException(
+                "Certificate chain exceeds " + MAX_CHAIN_DEPTH + " levels (possible cycle)");
     }
 
     public String toCertificatePem() {
