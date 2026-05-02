@@ -18,6 +18,7 @@ import java.security.Provider;
 import java.security.Security;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateExpiredException;
+import java.security.cert.CertificateFactory;
 import java.security.cert.CertificateNotYetValidException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
@@ -41,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -607,6 +609,135 @@ public class PkiTests {
                 () -> KeyAlgorithm.ec("   "));
         assertTrue(ex.getMessage().contains("curve"),
                 "rejection should name the parameter, got: " + ex.getMessage());
+    }
+
+    @Test
+    void issuedIntermediateIsACaWithKeyCertSign() {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Intermediate CA").build())
+                .build());
+
+        X509Certificate intCert = intermediate.getIssuer().getCertificate();
+        assertNotEquals(-1, intCert.getBasicConstraints(),
+                "intermediate must be a CA");
+        boolean[] keyUsage = intCert.getKeyUsage();
+        assertNotNull(keyUsage);
+        assertTrue(keyUsage[5], "intermediate must assert keyCertSign");
+        assertTrue(keyUsage[6], "intermediate must assert cRLSign");
+        assertTrue(intermediate.getIssuer().issuedBy(root.getIssuer()),
+                "intermediate must be signed by root");
+    }
+
+    @Test
+    void leafIssuedByIntermediateIsNotIssuedByRootDirectly() {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Issuing CA").build())
+                .build());
+
+        CertificateBundle leaf = intermediate.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("End entity").build())
+                .build());
+
+        assertTrue(leaf.issuedBy(intermediate.getIssuer()),
+                "leaf must verify against the intermediate that signed it");
+        assertFalse(leaf.issuedBy(root.getIssuer()),
+                "leaf must NOT verify against the root directly");
+    }
+
+    // The decisive test: build root -> intermediate -> leaf, then ask the JDK's
+    // standard PKIX validator (the same code that browsers and JDK TLS use)
+    // to walk the chain. If this passes, the certs are wired up correctly:
+    // AKI/SKI links, BasicConstraints, KeyUsage on each level, and signatures.
+    @Test
+    void fullRootIntermediateLeafChainValidatesUnderPkix() throws Exception {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Issuing CA").build())
+                .build());
+        CertificateBundle leaf = intermediate.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("End entity").build())
+                .dnsName("example.com")
+                .build());
+
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        java.security.cert.CertPath path = cf.generateCertPath(List.of(
+                leaf.getCertificate(),
+                intermediate.getIssuer().getCertificate()));
+
+        java.security.cert.TrustAnchor anchor =
+                new java.security.cert.TrustAnchor(root.getIssuer().getCertificate(), null);
+        java.security.cert.PKIXParameters params =
+                new java.security.cert.PKIXParameters(Set.of(anchor));
+        params.setRevocationEnabled(false);
+
+        java.security.cert.CertPathValidator validator =
+                java.security.cert.CertPathValidator.getInstance("PKIX");
+
+        // Throws CertPathValidatorException on failure; the assertion is the
+        // absence of a thrown exception.
+        validator.validate(path, params);
+    }
+
+    @Test
+    void chainsOfArbitraryDepthValidate() throws Exception {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki int1 = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Intermediate 1").build())
+                .build());
+        QuickPki int2 = int1.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Intermediate 2").build())
+                .build());
+        CertificateBundle leaf = int2.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("End entity").build())
+                .build());
+
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        java.security.cert.CertPath path = cf.generateCertPath(List.of(
+                leaf.getCertificate(),
+                int2.getIssuer().getCertificate(),
+                int1.getIssuer().getCertificate()));
+
+        java.security.cert.PKIXParameters params = new java.security.cert.PKIXParameters(
+                Set.of(new java.security.cert.TrustAnchor(root.getIssuer().getCertificate(), null)));
+        params.setRevocationEnabled(false);
+
+        java.security.cert.CertPathValidator.getInstance("PKIX").validate(path, params);
+    }
+
+    @Test
+    void rootIsRootIntermediateIsNot() {
+        QuickPki root = QuickPki.createDefault();
+        QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Intermediate").build())
+                .build());
+
+        assertTrue(root.isRoot());
+        assertNull(root.getParent());
+        assertFalse(intermediate.isRoot());
+        assertSame(root, intermediate.getParent());
+    }
+
+    @Test
+    void issueIntermediateRejectsSanEntries() {
+        QuickPki root = QuickPki.createDefault();
+
+        IllegalArgumentException dnsEx = assertThrows(IllegalArgumentException.class,
+                () -> root.issueIntermediate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Bad CA").build())
+                        .dnsName("example.com")
+                        .build()));
+        assertTrue(dnsEx.getMessage().toLowerCase().contains("subject alternative"),
+                "rejection should mention SAN, got: " + dnsEx.getMessage());
+
+        IllegalArgumentException ipEx = assertThrows(IllegalArgumentException.class,
+                () -> root.issueIntermediate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Bad CA").build())
+                        .ipAddress("127.0.0.1")
+                        .build()));
+        assertTrue(ipEx.getMessage().toLowerCase().contains("subject alternative"),
+                "rejection should mention SAN, got: " + ipEx.getMessage());
     }
 
     @BeforeAll

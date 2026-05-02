@@ -29,9 +29,7 @@ import java.security.SecureRandom;
 import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.security.spec.ECGenParameterSpec;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -43,12 +41,15 @@ import java.util.Optional;
  */
 public class QuickPki {
 
+    private final QuickPki parent;
     private final IssuerInfo issuerInfo;
     private final Provider provider;
     private final SecureRandom secureRandom = new SecureRandom();
     private final CertificateBundle issuer;
 
+    // Root-PKI constructor: generates a self-signed issuer.
     private QuickPki(Provider provider, IssuerInfo info) {
+        this.parent = null;
         this.provider = provider;
         this.issuerInfo = info;
         try {
@@ -56,6 +57,15 @@ public class QuickPki {
         } catch (Exception e) {
             throw new QuickPkiException("Failed to build issuer certificate", e);
         }
+    }
+
+    // Intermediate-PKI constructor: takes a pre-built issuer bundle (already
+    // signed by the parent), so we don't regenerate one.
+    private QuickPki(QuickPki parent, IssuerInfo info, CertificateBundle issuerBundle) {
+        this.parent = parent;
+        this.provider = parent.provider;
+        this.issuerInfo = info;
+        this.issuer = issuerBundle;
     }
 
     private KeyPair newKeyPair() throws GeneralSecurityException {
@@ -72,6 +82,17 @@ public class QuickPki {
         }
         return generator.generateKeyPair();
     }
+
+    // Resolves a CertInfo's start/end Instants, defaulting to now() and
+    // start+issuerInfo.defaultLifespan respectively when omitted.
+    private Validity resolveValidity(CertInfo info) {
+        Instant start = info.getValidFrom() != null ? info.getValidFrom() : Instant.now();
+        Instant end = info.getValidUntil() != null ? info.getValidUntil()
+                : start.plus(issuerInfo.getDefaultLifespan());
+        return new Validity(start, end);
+    }
+
+    private record Validity(Instant start, Instant end) {}
 
     // RFC 5280 §4.1.2.2 requires the serial to be a positive integer (1..2^159-1).
     // BigInteger(159, random) draws uniformly over [0, 2^159), so we reject 0.
@@ -110,6 +131,15 @@ public class QuickPki {
             Security.addProvider(provider);
         }
         return provider;
+    }
+
+    // Null for a root PKI; otherwise the PKI that issued this intermediate.
+    public QuickPki getParent() {
+        return parent;
+    }
+
+    public boolean isRoot() {
+        return parent == null;
     }
 
     public CertificateBundle getIssuer() {
@@ -159,25 +189,62 @@ public class QuickPki {
         }
     }
 
+    // Issues a subordinate CA certificate, signed by this PKI, and returns it
+    // wrapped as a new QuickPki that can itself issue further certificates.
+    // The intermediate inherits this PKI's algorithm and signature settings.
+    public QuickPki issueIntermediate(CertInfo info) {
+        if (!info.getDnsNames().isEmpty() || !info.getIpAddresses().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Subject Alternative Names (dnsName/ipAddress) are not supported on "
+                            + "intermediate CA certificates; put them on the end-entity cert instead");
+        }
+        try {
+            return intIssueIntermediate(info);
+        } catch (Exception e) {
+            throw new QuickPkiException("Failed to issue intermediate CA", e);
+        }
+    }
+
+    private QuickPki intIssueIntermediate(CertInfo info) throws Exception {
+        Validity validity = resolveValidity(info);
+
+        KeyPair keyPair = newKeyPair();
+        BigInteger serialNum = newSerialNumber();
+
+        X500Name issuerSubject = new JcaX509CertificateHolder(issuer.getCertificate()).getSubject();
+        SubjectName subjectName = info.getSubjectName();
+        if (subjectName == null) {
+            subjectName = SubjectName.builder().commonName("Default Intermediate CA").build();
+        }
+        X500Name subject = buildX500Name(subjectName);
+
+        ContentSigner signer = new JcaContentSignerBuilder(issuerInfo.getEffectiveSignatureAlgorithm())
+                .setProvider(provider).build(issuer.getKeyPair().getPrivate());
+        X509v3CertificateBuilder builder =
+                new JcaX509v3CertificateBuilder(issuerSubject, serialNum,
+                        Date.from(validity.start()), Date.from(validity.end()), subject, keyPair.getPublic());
+
+        JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
+        builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
+        builder.addExtension(Extension.keyUsage, true,
+                new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+        builder.addExtension(Extension.subjectKeyIdentifier, false,
+                extUtils.createSubjectKeyIdentifier(keyPair.getPublic()));
+        builder.addExtension(Extension.authorityKeyIdentifier, false,
+                extUtils.createAuthorityKeyIdentifier(issuer.getCertificate()));
+
+        X509CertificateHolder holder = builder.build(signer);
+        X509Certificate cert = new JcaX509CertificateConverter().setProvider(provider).getCertificate(holder);
+        CertificateBundle intermediateBundle = new CertificateBundle(this.issuer, cert, keyPair);
+
+        return new QuickPki(this, this.issuerInfo, intermediateBundle);
+    }
+
     private CertificateBundle intIssueCertificate(CertInfo info) throws Exception {
 
-        Instant start = info.getValidFrom();
-        Instant end = info.getValidUntil();
-        if(start == null) {
-            start = Instant.now();
-        }
-        if(end == null) {
-           Duration lifespan = issuerInfo.getDefaultLifespan();
-           if(lifespan == null) {
-               lifespan = Duration.ofDays(1L);
-           }
-           end = start.plus(lifespan);
-        }
-        Date startDate = Date
-                .from(start);
-
-        Date endDate = Date
-                .from(end);
+        Validity validity = resolveValidity(info);
+        Date startDate = Date.from(validity.start());
+        Date endDate = Date.from(validity.end());
 
         KeyPair keyPair = newKeyPair();
         BigInteger serialNum = newSerialNumber();
