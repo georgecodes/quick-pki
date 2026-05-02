@@ -18,6 +18,7 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
 import java.security.SecureRandom;
 import java.security.Security;
@@ -35,7 +36,6 @@ import java.util.Optional;
 public class QuickPki {
 
     private final IssuerInfo issuerInfo;
-    private final KeyPairGenerator keyPairGenerator;
     private final Provider provider;
     private final SecureRandom secureRandom = new SecureRandom();
     private final CertificateBundle issuer;
@@ -44,12 +44,16 @@ public class QuickPki {
         this.provider = provider;
         this.issuerInfo = info;
         try {
-            keyPairGenerator = KeyPairGenerator.getInstance("RSA", provider);
-            keyPairGenerator.initialize(2048);
             issuer = createIssuer(info);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private KeyPair newKeyPair() throws NoSuchAlgorithmException {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA", provider);
+        generator.initialize(2048, secureRandom);
+        return generator.generateKeyPair();
     }
 
 
@@ -81,7 +85,7 @@ public class QuickPki {
         Date endDate = Date
                 .from(info.getValidUntil());
 
-        KeyPair rootKeyPair = keyPairGenerator.generateKeyPair();
+        KeyPair rootKeyPair = newKeyPair();
         BigInteger rootSerialNum = new BigInteger(159, secureRandom);
 
         SubjectName subjectName = Optional.ofNullable(info.getSubjectName())
@@ -135,7 +139,7 @@ public class QuickPki {
         Date endDate = Date
                 .from(end);
 
-        KeyPair keyPair = keyPairGenerator.generateKeyPair();
+        KeyPair keyPair = newKeyPair();
         BigInteger serialNum = new BigInteger(159, secureRandom);
 
         X500Name issuerSubject = new JcaX509CertificateHolder(issuer.getCertificate()).getSubject();

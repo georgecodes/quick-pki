@@ -17,7 +17,15 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -253,6 +261,41 @@ public class PkiTests {
                 "the comma must remain part of the CN value, not introduce a new RDN");
         assertEquals(0, subject.getRDNs(BCStyle.O).length,
                 "no Organization RDN should have been injected");
+    }
+
+    // Regression: KeyPairGenerator was a shared mutable field, so concurrent
+    // issueCertificate calls could race on internal state. Issuing a batch of
+    // certs from many threads should produce N distinct, valid bundles.
+    @Test
+    void canIssueCertificatesFromMultipleThreadsConcurrently() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        CertificateBundle issuer = pki.getIssuer();
+
+        int threads = 8;
+        int perThread = 4;
+        int total = threads * perThread;
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<CertificateBundle>> futures = new ArrayList<>(total);
+            for (int i = 0; i < total; i++) {
+                final int idx = i;
+                futures.add(executor.submit(() -> pki.issueCertificate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Concurrent " + idx).build())
+                        .build())));
+            }
+
+            Set<BigInteger> serials = new HashSet<>();
+            for (Future<CertificateBundle> f : futures) {
+                CertificateBundle bundle = f.get(30, TimeUnit.SECONDS);
+                assertNotNull(bundle);
+                assertTrue(bundle.issuedBy(issuer));
+                assertTrue(serials.add(bundle.getCertificate().getSerialNumber()),
+                        "duplicate serial under concurrent issuance");
+            }
+            assertEquals(total, serials.size());
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @BeforeAll
