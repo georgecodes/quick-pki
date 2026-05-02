@@ -1,0 +1,183 @@
+2026-05-02 16:04:13,120:DEBUG:certbot._internal.main:certbot version: 5.5.0
+2026-05-02 16:04:13,120:DEBUG:certbot._internal.main:Location of certbot entry point: /opt/homebrew/bin/certbot
+2026-05-02 16:04:13,120:DEBUG:certbot._internal.main:Arguments: ['--config', './cli.ini', '--standalone', '-d', 'test.ghmlabs.com']
+2026-05-02 16:04:13,120:DEBUG:certbot._internal.main:Discovered plugins: PluginsRegistry(PluginEntryPoint#apache,PluginEntryPoint#dns-cloudflare,PluginEntryPoint#manual,PluginEntryPoint#nginx,PluginEntryPoint#null,PluginEntryPoint#standalone,PluginEntryPoint#webroot)
+2026-05-02 16:04:13,137:DEBUG:certbot._internal.log:Root logging level set at 30
+2026-05-02 16:04:13,138:DEBUG:certbot._internal.plugins.selection:Requested authenticator standalone and installer None
+2026-05-02 16:04:13,138:DEBUG:certbot._internal.plugins.selection:Single candidate plugin: * standalone
+Description: Runs an HTTP server locally which serves the necessary validation files under the /.well-known/acme-challenge/ request path. Suitable if there is no HTTP server already running. HTTP challenge only (wildcards not supported).
+Interfaces: Authenticator, Plugin
+Entry point: EntryPoint(name='standalone', value='certbot._internal.plugins.standalone:Authenticator', group='certbot.plugins')
+Initialized: <certbot._internal.plugins.standalone.Authenticator object at 0x105bbcad0>
+Prep: True
+2026-05-02 16:04:13,138:DEBUG:certbot._internal.plugins.selection:Selected authenticator <certbot._internal.plugins.standalone.Authenticator object at 0x105bbcad0> and installer None
+2026-05-02 16:04:13,138:INFO:certbot._internal.plugins.selection:Plugins selected: Authenticator standalone, Installer None
+2026-05-02 16:04:13,165:DEBUG:acme.client:Sending GET request to http://localhost:8080/acme/directory.
+2026-05-02 16:04:13,174:DEBUG:urllib3.connectionpool:Starting new HTTP connection (1): localhost:8080
+2026-05-02 16:04:13,181:DEBUG:urllib3.connectionpool:http://localhost:8080 "GET /acme/directory HTTP/1.1" 200 249
+2026-05-02 16:04:13,182:DEBUG:acme.client:Received response:
+HTTP 200
+Date: Sat, 02 May 2026 15:04:13 GMT
+Content-Type: application/json
+Content-Length: 249
+
+{"meta":{"website":"https://github.com/georgecodes/quick-pki","externalAccountRequired":false},"newNonce":"http://localhost:8080/acme/new-nonce","newOrder":"http://localhost:8080/acme/new-order","newAccount":"http://localhost:8080/acme/new-account"}
+2026-05-02 16:04:13,182:DEBUG:acme.client:Requesting fresh nonce
+2026-05-02 16:04:13,182:DEBUG:acme.client:Sending HEAD request to http://localhost:8080/acme/new-nonce.
+2026-05-02 16:04:13,184:DEBUG:urllib3.connectionpool:http://localhost:8080 "HEAD /acme/new-nonce HTTP/1.1" 204 0
+2026-05-02 16:04:13,184:DEBUG:acme.client:Received response:
+HTTP 204
+Date: Sat, 02 May 2026 15:04:13 GMT
+Content-Type: application/json
+Replay-Nonce: Pap6gbiVH4WT-8cPFxavYV2vWYspe-Zv
+Cache-Control: no-store
+
+
+2026-05-02 16:04:13,185:DEBUG:acme.client:Storing nonce: Pap6gbiVH4WT-8cPFxavYV2vWYspe-Zv
+2026-05-02 16:04:13,185:DEBUG:acme.client:JWS payload:
+b'{\n  "contact": [\n    "mailto:george@georgemcintosh.com"\n  ],\n  "termsOfServiceAgreed": true\n}'
+2026-05-02 16:04:13,186:DEBUG:acme.client:Sending POST request to http://localhost:8080/acme/new-account:
+{
+  "protected": "eyJhbGciOiAiUlMyNTYiLCAiandrIjogeyJuIjogInZrQU9oN0FNbmU3a25Sbmg1WF9iS3NJYjRDSjluNzhaS0RsT1ZJVHNFejVra0xKYkZyejA0VDFqQ1RGS2R0UEo3YlphaXhocGZQZ3VhWE1tcVJHcE50dmgtT0FoLUdjQmk0bktBWGhiSmp5YWFfVlQxaWxKTmZJdmpralVfRmY1X0FIYVBoSTFLY2RQSVdzN3QzOERpaVVkTjFURXdrWGhieF82eFVlNTZFSjc4R05fOEdEZlJtQ0VsbWU4bGo0ekZlaTFFa3ZNT1lvd2dqcVpJWGk1OWw5RXBjQzFJYmFZemFRdWJ4ejNJQVY5R1Vib3ZHTTlSeHNCbmc0Tk5YV3RaTGN3NnBrRVlOeDhTUFBkWGVhNzBPeHBGYTEzd01zWExzTFp6NXoxbjA2U2xPb0JJQjFqZVVMRURBaFJhWElWc2VkbUVlMXVPWWxNb0dUZ3BfeTV4dyIsICJlIjogIkFRQUIiLCAia3R5IjogIlJTQSJ9LCAibm9uY2UiOiAiUGFwNmdiaVZINFdULThjUEZ4YXZZVjJ2V1lzcGUtWnYiLCAidXJsIjogImh0dHA6Ly9sb2NhbGhvc3Q6ODA4MC9hY21lL25ldy1hY2NvdW50In0",
+  "signature": "TJ2GYTF4X_hco3o1HZGqB7ZhwVdwE4wqEj4SHBjmecCNT5z9CSdiKhoAOvKkDRlwrL2KfpPsrEBDMt30w1UL44kum_yZU7e1GAsUTE1X1ww9WB0ptRMGaSX870larQni3thpaQthRXPis24ziKukynXT3bP5bpzr9Gjow-UGvfvtZtPtQ5Mja4W3gUGBI2PRKbmPnwv7kLFZrBSxXFl6sPOqXh1Yr8OTGvigczkhtg5MMUpD1qG579VXHmPei5K_hE-nSba7KVVyvXtw4adPPnvKFI3i2133XAxWyhBZKN6GZUs8LFuR2JSSi1l7A9lA35Xm-q_6NboUs0Huqshi_w",
+  "payload": "ewogICJjb250YWN0IjogWwogICAgIm1haWx0bzpnZW9yZ2VAZ2VvcmdlbWNpbnRvc2guY29tIgogIF0sCiAgInRlcm1zT2ZTZXJ2aWNlQWdyZWVkIjogdHJ1ZQp9"
+}
+2026-05-02 16:04:13,232:DEBUG:urllib3.connectionpool:http://localhost:8080 "POST /acme/new-account HTTP/1.1" 201 155
+2026-05-02 16:04:13,233:DEBUG:acme.client:Received response:
+HTTP 201
+Date: Sat, 02 May 2026 15:04:13 GMT
+Content-Type: application/json
+Replay-Nonce: jfxO8OeNScnyjZ03i0zOFvsZfPDq-hTr
+Cache-Control: no-store
+Location: http://localhost:8080/acme/account/6335e05f-511a-426a-a1c5-0620044e1709
+Content-Length: 155
+
+{"status":"valid","orders":"http://localhost:8080/acme/account/6335e05f-511a-426a-a1c5-0620044e1709/orders","contact":["mailto:george@georgemcintosh.com"]}
+2026-05-02 16:04:13,233:DEBUG:acme.client:Storing nonce: jfxO8OeNScnyjZ03i0zOFvsZfPDq-hTr
+2026-05-02 16:04:13,234:DEBUG:certbot._internal.display.obj:Notifying user: Account registered.
+2026-05-02 16:04:13,234:DEBUG:certbot._internal.main:Picked account: <Account(RegistrationResource(body=Registration(key=None, contact=('mailto:george@georgemcintosh.com',), agreement=None, status='valid', terms_of_service_agreed=None, only_return_existing=None, external_account_binding=None), uri='http://localhost:8080/acme/account/6335e05f-511a-426a-a1c5-0620044e1709', new_authzr_uri=None, terms_of_service=None), 23c44f4f3be3ad5d6a42a1a9882507ec, Meta(creation_dt=datetime.datetime(2026, 5, 2, 15, 4, 13, tzinfo=datetime.timezone.utc), creation_host='Georges-M1-Macbook-2.local', register_to_eff=None))>
+2026-05-02 16:04:13,235:DEBUG:certbot._internal.display.obj:Notifying user: Requesting a certificate for test.ghmlabs.com
+2026-05-02 16:04:13,236:DEBUG:acme.client:JWS payload:
+b'{\n  "identifiers": [\n    {\n      "type": "dns",\n      "value": "test.ghmlabs.com"\n    }\n  ]\n}'
+2026-05-02 16:04:13,237:DEBUG:acme.client:Sending POST request to http://localhost:8080/acme/new-order:
+{
+  "protected": "eyJhbGciOiAiUlMyNTYiLCAia2lkIjogImh0dHA6Ly9sb2NhbGhvc3Q6ODA4MC9hY21lL2FjY291bnQvNjMzNWUwNWYtNTExYS00MjZhLWExYzUtMDYyMDA0NGUxNzA5IiwgIm5vbmNlIjogImpmeE84T2VOU2NueWpaMDNpMHpPRnZzWmZQRHEtaFRyIiwgInVybCI6ICJodHRwOi8vbG9jYWxob3N0OjgwODAvYWNtZS9uZXctb3JkZXIifQ",
+  "signature": "RixycvlcN-mbjt-qqDeh0jpv4M6Z5ouusJ2DCwu_QkZG5oT1zosBTZTVzBCDawi_QgULBtF-9mWbpSkwGAwqrEngYpvFQM9Ny9cSkU5pJ6YdXwE5kM5EoBGugQ1qOeiS14dTCN6y6-eEohhSF6XlVVfc739GDcRVQStHUo_D3gzecT4GLzISmV2Qg8G4PYaiLF8DQfGhPiWw8j1DTzwQGqkb7iHzqnIvGJAQc84F0_AaszlvQjWR3N4X9QznzL2HmzFyteiceUshYat-Pdtln5z6Fz0vcQcBP0jhhHOVCxng_V_Ab0M3JNlYP8ai7n0gCEW2L9_Z0Dv5xZn2nApxig",
+  "payload": "ewogICJpZGVudGlmaWVycyI6IFsKICAgIHsKICAgICAgInR5cGUiOiAiZG5zIiwKICAgICAgInZhbHVlIjogInRlc3QuZ2htbGFicy5jb20iCiAgICB9CiAgXQp9"
+}
+2026-05-02 16:04:13,269:DEBUG:urllib3.connectionpool:http://localhost:8080 "POST /acme/new-order HTTP/1.1" 201 295
+2026-05-02 16:04:13,269:DEBUG:acme.client:Received response:
+HTTP 201
+Date: Sat, 02 May 2026 15:04:13 GMT
+Content-Type: application/json
+Replay-Nonce: Kk_OsD5Zdk13tnyl_C0JcIT5lTPvJeVS
+Cache-Control: no-store
+Location: http://localhost:8080/acme/order/2efee931-ded5-4bf4-a5b6-9f099e9e7b95
+Content-Length: 295
+
+{"status":"pending","expires":"2026-05-02T16:04:13.244073Z","identifiers":[{"type":"dns","value":"test.ghmlabs.com"}],"authorizations":["http://localhost:8080/acme/authz/5b7f61b3-5637-4103-9691-09e908f26e88"],"finalize":"http://localhost:8080/acme/finalize/2efee931-ded5-4bf4-a5b6-9f099e9e7b95"}
+2026-05-02 16:04:13,269:DEBUG:acme.client:Storing nonce: Kk_OsD5Zdk13tnyl_C0JcIT5lTPvJeVS
+2026-05-02 16:04:13,269:DEBUG:acme.client:JWS payload:
+b''
+2026-05-02 16:04:13,270:DEBUG:acme.client:Sending POST request to http://localhost:8080/acme/authz/5b7f61b3-5637-4103-9691-09e908f26e88:
+{
+  "protected": "eyJhbGciOiAiUlMyNTYiLCAia2lkIjogImh0dHA6Ly9sb2NhbGhvc3Q6ODA4MC9hY21lL2FjY291bnQvNjMzNWUwNWYtNTExYS00MjZhLWExYzUtMDYyMDA0NGUxNzA5IiwgIm5vbmNlIjogIktrX09zRDVaZGsxM3RueWxfQzBKY0lUNWxUUHZKZVZTIiwgInVybCI6ICJodHRwOi8vbG9jYWxob3N0OjgwODAvYWNtZS9hdXRoei81YjdmNjFiMy01NjM3LTQxMDMtOTY5MS0wOWU5MDhmMjZlODgifQ",
+  "signature": "Yg4Ya1koZy8DzqYyKaHkFIYChuEeuo_ZbUYhku63CIJhckQtMkwQsxybBVts1MirEUbaR065EvhTd0zPzDRxNjHluy4a4H2AiJv_gW_eahpHpdjNge5LctKyiQowZBfQNmhG8znO8N5wVdz44ygSG9V0NDRsx7PAtJ4szWROwasM3YRlDDZF5Uy2XuZ3UWrRSRWJDPgM5RjgAPT8Cp_90y2IX1Kmz6QRUEqw1RXPxSBYja_i8KY_P4MGM6emChbIPKy94Lyc3OPffB7X886Qjd-Lad8OOMgn94RFfwXfzQTBrwRY7bTg0PO-pmTMJ9SSY4emvuiwXZXkQMIGg2mBbw",
+  "payload": ""
+}
+2026-05-02 16:04:13,277:DEBUG:urllib3.connectionpool:http://localhost:8080 "POST /acme/authz/5b7f61b3-5637-4103-9691-09e908f26e88 HTTP/1.1" 200 477
+2026-05-02 16:04:13,277:DEBUG:acme.client:Received response:
+HTTP 200
+Date: Sat, 02 May 2026 15:04:13 GMT
+Content-Type: application/json
+Replay-Nonce: wrNRALrLRJ5TFCRyq0r1QNEmVLWNk4Gc
+Cache-Control: no-store
+Content-Length: 477
+
+{"identifier":{"type":"dns","value":"test.ghmlabs.com"},"status":"pending","expires":"2026-05-02T16:04:13.244073Z","challenges":[{"type":"dns-01","url":"http://localhost:8080/acme/challenge/5e77ccd9-4463-479e-a69b-9c6c0f7ee306","status":"pending","token":"0OYM_2R3e0iExxx7NSsOD8j5EpTDNh8sgX_SW5L7i8k"},{"type":"http-01","url":"http://localhost:8080/acme/challenge/4d6e2db3-0d2a-4cd8-aa27-c935d3dc2524","status":"pending","token":"rd3Sl7obJS_j1uVc0odJxNA9vgPqiPsiFzLdIunxfv8"}]}
+2026-05-02 16:04:13,278:DEBUG:acme.client:Storing nonce: wrNRALrLRJ5TFCRyq0r1QNEmVLWNk4Gc
+2026-05-02 16:04:13,278:INFO:certbot._internal.auth_handler:Performing the following challenges:
+2026-05-02 16:04:13,278:INFO:certbot._internal.auth_handler:http-01 challenge for Identifier(typ=IdentifierType(dns), value='test.ghmlabs.com')
+2026-05-02 16:04:13,336:DEBUG:acme.standalone:Successfully bound to :80 using IPv6
+2026-05-02 16:04:13,336:DEBUG:acme.standalone:Certbot wasn't able to bind to :80 using IPv4, this is often expected due to the dual stack nature of IPv6 socket implementations.
+2026-05-02 16:04:13,337:DEBUG:acme.client:JWS payload:
+b'{}'
+2026-05-02 16:04:13,338:DEBUG:acme.client:Sending POST request to http://localhost:8080/acme/challenge/4d6e2db3-0d2a-4cd8-aa27-c935d3dc2524:
+{
+  "protected": "eyJhbGciOiAiUlMyNTYiLCAia2lkIjogImh0dHA6Ly9sb2NhbGhvc3Q6ODA4MC9hY21lL2FjY291bnQvNjMzNWUwNWYtNTExYS00MjZhLWExYzUtMDYyMDA0NGUxNzA5IiwgIm5vbmNlIjogIndyTlJBTHJMUko1VEZDUnlxMHIxUU5FbVZMV05rNEdjIiwgInVybCI6ICJodHRwOi8vbG9jYWxob3N0OjgwODAvYWNtZS9jaGFsbGVuZ2UvNGQ2ZTJkYjMtMGQyYS00Y2Q4LWFhMjctYzkzNWQzZGMyNTI0In0",
+  "signature": "mAWYIJigyVccKkVserkXxkgrSHb_f-yjCJTqgxEgjyQuByfBYS8VemyS4DdGZP9QmW7dfso1Y1JrHNbhxTDfLbIbI4wg5Cz-Dg9TGR_L9qr12z-Jnx-nitkGL-CVqNEb0HWEO1c2NUFDoz9463O1oGDPo0cReCBKP8t8yVKmJVs4EgUTAGiT6O0twiaLWVjXCYpuCmNnVERkyUb-NZ_w6etjRGN9U6QOUNxKSW-8F-FI-PC8OZeelyN9Twi0FqUY7n45ZAh1wYtc62ny2pIqciET-oRMiMp6jIQquGcN1j0GAubc0JDpDUrmK0iqJ6_zmUAx5Pku0kjwOSOxpPMvBQ",
+  "payload": "e30"
+}
+2026-05-02 16:04:16,433:DEBUG:urllib3.connectionpool:http://localhost:8080 "POST /acme/challenge/4d6e2db3-0d2a-4cd8-aa27-c935d3dc2524 HTTP/1.1" 400 102
+2026-05-02 16:04:16,433:DEBUG:acme.client:Received response:
+HTTP 400
+Date: Sat, 02 May 2026 15:04:13 GMT
+Content-Type: application/json
+Replay-Nonce: FqcUzlOhFy_gXMEp99_aaTU55g_wlqP1
+Cache-Control: no-store
+Content-Length: 102
+
+{"type":"urn:ietf:params:acme:error:unauthorized","detail":"Challenge validation failed","status":400}
+2026-05-02 16:04:16,433:DEBUG:acme.client:Ignoring wrong Content-Type ('application/json') for JSON Error
+2026-05-02 16:04:16,436:DEBUG:certbot._internal.error_handler:Encountered exception:
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/_internal/auth_handler.py", line 100, in handle_authorizations
+    self.acme.answer_challenge(achall.challb, resp)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 520, in answer_challenge
+    resp = self._post(challb.uri, response)
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 461, in _post
+    return self.net.post(*args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 812, in post
+    return self._post_once(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 827, in _post_once
+    response = self._check_response(response, content_type=content_type)
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 699, in _check_response
+    raise messages.Error.from_json(jobj)
+acme.messages.Error: urn:ietf:params:acme:error:unauthorized :: The client lacks sufficient authorization :: Challenge validation failed
+
+2026-05-02 16:04:16,436:DEBUG:certbot._internal.error_handler:Calling registered functions
+2026-05-02 16:04:16,436:INFO:certbot._internal.auth_handler:Cleaning up challenges
+2026-05-02 16:04:16,436:DEBUG:certbot._internal.plugins.standalone:Stopping server at :::80...
+2026-05-02 16:04:16,844:DEBUG:certbot._internal.log:Exiting abnormally:
+Traceback (most recent call last):
+  File "/opt/homebrew/bin/certbot", line 6, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/main.py", line 18, in main
+    return internal_main.main(cli_args)
+           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/_internal/main.py", line 1886, in main
+    return config.func(config, plugins)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/_internal/main.py", line 1598, in certonly
+    lineage = _get_and_save_cert(le_client, config, sans, certname, lineage)
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/_internal/main.py", line 143, in _get_and_save_cert
+    lineage = le_client.obtain_and_enroll_certificate(sans, certname)
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/_internal/client.py", line 533, in obtain_and_enroll_certificate
+    cert, chain, key, _ = self.obtain_certificate(sans)
+                          ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/_internal/client.py", line 434, in obtain_certificate
+    orderr = self._get_order_and_authorizations(csr.data, self.config.allow_subset_of_names)
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/_internal/client.py", line 512, in _get_order_and_authorizations
+    authzr = self.auth_handler.handle_authorizations(orderr, self.config, best_effort)
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/certbot/_internal/auth_handler.py", line 100, in handle_authorizations
+    self.acme.answer_challenge(achall.challb, resp)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 520, in answer_challenge
+    resp = self._post(challb.uri, response)
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 461, in _post
+    return self.net.post(*args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 812, in post
+    return self._post_once(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 827, in _post_once
+    response = self._check_response(response, content_type=content_type)
+  File "/opt/homebrew/Cellar/certbot/5.5.0/libexec/lib/python3.14/site-packages/acme/client.py", line 699, in _check_response
+    raise messages.Error.from_json(jobj)
+acme.messages.Error: urn:ietf:params:acme:error:unauthorized :: The client lacks sufficient authorization :: Challenge validation failed
+2026-05-02 16:04:16,848:ERROR:certbot._internal.log:An unexpected error occurred:
+2026-05-02 16:04:16,848:ERROR:certbot._internal.log:Challenge validation failed

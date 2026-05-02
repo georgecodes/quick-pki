@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/georgemcintosh/work/elevenware/identity/quick-pki/quick-pki-acme-server/**)"
+    ]
+  }
+}
