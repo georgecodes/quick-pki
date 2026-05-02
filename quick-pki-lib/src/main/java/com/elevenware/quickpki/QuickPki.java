@@ -21,13 +21,14 @@ import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
 import java.math.BigInteger;
+import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.cert.X509Certificate;
+import java.security.spec.ECGenParameterSpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -51,15 +52,24 @@ public class QuickPki {
         this.provider = provider;
         this.issuerInfo = info;
         try {
-            issuer = createIssuer(info);
+            issuer = createIssuer();
         } catch (Exception e) {
             throw new QuickPkiException("Failed to build issuer certificate", e);
         }
     }
 
-    private KeyPair newKeyPair() throws NoSuchAlgorithmException {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA", provider);
-        generator.initialize(2048, secureRandom);
+    private KeyPair newKeyPair() throws GeneralSecurityException {
+        KeyAlgorithm algorithm = issuerInfo.getKeyAlgorithm();
+        KeyPairGenerator generator;
+        if (algorithm instanceof KeyAlgorithm.Rsa rsa) {
+            generator = KeyPairGenerator.getInstance("RSA", provider);
+            generator.initialize(rsa.bits(), secureRandom);
+        } else if (algorithm instanceof KeyAlgorithm.Ec ec) {
+            generator = KeyPairGenerator.getInstance("EC", provider);
+            generator.initialize(new ECGenParameterSpec(ec.curve()), secureRandom);
+        } else {
+            throw new IllegalStateException("Unsupported KeyAlgorithm: " + algorithm);
+        }
         return generator.generateKeyPair();
     }
 
@@ -71,6 +81,17 @@ public class QuickPki {
             serial = new BigInteger(159, secureRandom);
         } while (serial.signum() == 0);
         return serial;
+    }
+
+    // KeyUsage.keyEncipherment is RSA key-transport semantics; for EC keys it is
+    // meaningless and some strict validators reject it. Use keyAgreement (ECDH)
+    // for EC, matching the convention that Let's Encrypt etc. follow.
+    private KeyUsage leafKeyUsageFor(KeyPair keyPair) {
+        String algo = keyPair.getPublic().getAlgorithm();
+        if ("EC".equalsIgnoreCase(algo)) {
+            return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyAgreement);
+        }
+        return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment);
     }
 
 
@@ -95,24 +116,24 @@ public class QuickPki {
         return issuer;
     }
 
-    private CertificateBundle createIssuer(IssuerInfo info) throws Exception {
+    private CertificateBundle createIssuer() throws Exception {
         Date startDate = Date
-                .from(info.getValidFrom());
+                .from(issuerInfo.getValidFrom());
 
         Date endDate = Date
-                .from(info.getValidUntil());
+                .from(issuerInfo.getValidUntil());
 
         KeyPair rootKeyPair = newKeyPair();
         BigInteger rootSerialNum = newSerialNumber();
 
-        SubjectName subjectName = Optional.ofNullable(info.getSubjectName())
+        SubjectName subjectName = Optional.ofNullable(issuerInfo.getSubjectName())
                 .orElse(SubjectName.builder()
                         .commonName("Default Root Issuer")
                         .build());
 
         X500Name rootCertIssuer = buildX500Name(subjectName);
         X500Name rootCertSubject = rootCertIssuer;
-        ContentSigner rootCertContentSigner = new JcaContentSignerBuilder("SHA256withRSA")
+        ContentSigner rootCertContentSigner = new JcaContentSignerBuilder(issuerInfo.getEffectiveSignatureAlgorithm())
                 .setProvider(provider).build(rootKeyPair.getPrivate());
         X509v3CertificateBuilder rootCertBuilder =
                 new JcaX509v3CertificateBuilder(rootCertIssuer, rootSerialNum,
@@ -168,7 +189,7 @@ public class QuickPki {
             subjectName = SubjectName.builder().commonName("Default Subject").build();
         }
         X500Name subject = buildX500Name(subjectName);
-        ContentSigner rootCertContentSigner = new JcaContentSignerBuilder("SHA256withRSA")
+        ContentSigner rootCertContentSigner = new JcaContentSignerBuilder(issuerInfo.getEffectiveSignatureAlgorithm())
                 .setProvider(provider).build(this.issuer.getKeyPair().getPrivate());
         X509v3CertificateBuilder certificateBuilder =
                 new JcaX509v3CertificateBuilder(issuerSubject, serialNum,
@@ -176,8 +197,7 @@ public class QuickPki {
 
         JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
         certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
-        certificateBuilder.addExtension(Extension.keyUsage, true,
-                new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+        certificateBuilder.addExtension(Extension.keyUsage, true, leafKeyUsageFor(keyPair));
         certificateBuilder.addExtension(Extension.extendedKeyUsage, false,
                 new ExtendedKeyUsage(new KeyPurposeId[] {
                         KeyPurposeId.id_kp_serverAuth,
