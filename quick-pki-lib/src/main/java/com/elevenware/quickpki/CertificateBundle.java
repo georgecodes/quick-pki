@@ -114,6 +114,7 @@ public class CertificateBundle {
     // OpenSSL >= 1.1 and modern Java tools expect this rather than the legacy
     // BEGIN RSA PRIVATE KEY block.
     public String toPrivateKeyPem() {
+        requirePrivateKey("export PKCS#8 private key PEM");
         StringWriter sw = new StringWriter();
         try (JcaPEMWriter pemWriter = new JcaPEMWriter(sw)) {
             // null encryptor = unencrypted PKCS#8.
@@ -144,6 +145,7 @@ public class CertificateBundle {
     public KeyStore toKeyStore(String alias, char[] password) {
         Objects.requireNonNull(alias, "alias must not be null");
         Objects.requireNonNull(password, "password must not be null");
+        requirePrivateKey("build PKCS12 KeyStore");
         try {
             KeyStore ks = KeyStore.getInstance("PKCS12");
             ks.load(null, null);
@@ -187,6 +189,18 @@ public class CertificateBundle {
                     "Unsupported public key algorithm for JWK export: " + publicAlgorithm);
         } catch (CertificateEncodingException e) {
             throw new QuickPkiException("Failed to encode certificate for JWK x5c", e);
+        }
+    }
+
+    // Bundles produced by QuickPki.issueCertificate(info, PublicKey) carry a
+    // KeyPair with no private half (the subscriber kept it). Anything that
+    // needs to sign or export the private key must fail fast with a clear
+    // message rather than NPE inside BouncyCastle.
+    private void requirePrivateKey(String operation) {
+        if (keyPair == null || keyPair.getPrivate() == null) {
+            throw new QuickPkiException(
+                    "Cannot " + operation + ": this CertificateBundle has no private key "
+                            + "(it was issued from a caller-supplied public key)");
         }
     }
 

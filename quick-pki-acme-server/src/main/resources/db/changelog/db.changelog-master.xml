@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="001-acme-v1" author="codex">
+        <createTable tableName="ca_material">
+            <column name="id" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="issuer_info_json" type="text">
+                <constraints nullable="false"/>
+            </column>
+            <column name="certificate_pem" type="text">
+                <constraints nullable="false"/>
+            </column>
+            <column name="private_key_ciphertext" type="bytea">
+                <constraints nullable="false"/>
+            </column>
+            <column name="private_key_salt" type="bytea">
+                <constraints nullable="false"/>
+            </column>
+            <column name="private_key_iv" type="bytea">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="acme_accounts">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="key_thumbprint" type="varchar(256)">
+                <constraints nullable="false" unique="true"/>
+            </column>
+            <column name="jwk_json" type="text">
+                <constraints nullable="false"/>
+            </column>
+            <column name="contact_json" type="text"/>
+            <column name="status" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="terms_agreed" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="acme_orders">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="account_id" type="uuid">
+                <constraints nullable="false" foreignKeyName="fk_orders_account" references="acme_accounts(id)"/>
+            </column>
+            <column name="status" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="timestamp with time zone">
+                <constraints nullable="false"/>
+            </column>
+            <column name="not_before" type="timestamp with time zone"/>
+            <column name="not_after" type="timestamp with time zone"/>
+            <column name="identifiers_json" type="text">
+                <constraints nullable="false"/>
+            </column>
+            <column name="csr_der" type="bytea"/>
+            <column name="certificate_pem" type="text"/>
+            <column name="chain_pem" type="text"/>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="acme_authorizations">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="order_id" type="uuid">
+                <constraints nullable="false" foreignKeyName="fk_authz_order" references="acme_orders(id)"/>
+            </column>
+            <column name="identifier_type" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="identifier_value" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="wildcard" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="timestamp with time zone">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="acme_challenges">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="authorization_id" type="uuid">
+                <constraints nullable="false" foreignKeyName="fk_challenge_authz" references="acme_authorizations(id)"/>
+            </column>
+            <column name="type" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="token" type="varchar(256)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="validated_at" type="timestamp with time zone"/>
+            <column name="error_json" type="text"/>
+        </createTable>
+
+        <createIndex tableName="acme_authorizations" indexName="idx_authz_order">
+            <column name="order_id"/>
+        </createIndex>
+        <createIndex tableName="acme_challenges" indexName="idx_challenge_authz">
+            <column name="authorization_id"/>
+        </createIndex>
+    </changeSet>
+</databaseChangeLog>

@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Provider;
@@ -93,6 +95,44 @@ public class PkiTests {
         assertFalse(bundle.issuedBy(bundle));
         assertFalse(issuer.issuedBy(bundle));
 
+    }
+
+    @Test
+    void canIssueCertificateForCallerSuppliedPublicKey() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair requestedKeyPair = generator.generateKeyPair();
+
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                        .subjectName(SubjectName.builder()
+                                .commonName("Caller Key Certificate")
+                                .build())
+                        .dnsName("example.com")
+                        .build(),
+                requestedKeyPair.getPublic());
+
+        assertEquals(requestedKeyPair.getPublic(), bundle.getCertificate().getPublicKey());
+        assertTrue(bundle.issuedBy(pki.getIssuer()));
+        assertNull(bundle.getKeyPair().getPrivate(),
+                "QuickPki must not invent or retain a private key when issuing for a caller-supplied public key");
+    }
+
+    @Test
+    void canRehydratePkiFromPersistedIssuerBundle() {
+        IssuerInfo issuerInfo = IssuerInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Persistent Root").build())
+                .defaultLifespan(Duration.ofDays(90))
+                .build();
+        QuickPki original = QuickPki.create(issuerInfo);
+        QuickPki rehydrated = QuickPki.fromIssuer(issuerInfo, original.getIssuer());
+
+        CertificateBundle bundle = rehydrated.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("After Restart").build())
+                .build());
+
+        assertEquals(original.getIssuer().getCertificate(), rehydrated.getIssuer().getCertificate());
+        assertTrue(bundle.issuedBy(original.getIssuer()));
     }
 
     @Test

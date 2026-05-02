@@ -32,6 +32,7 @@ import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.cert.CertificateException;
@@ -75,6 +76,16 @@ public class QuickPki {
         this.provider = parent.provider;
         this.issuerInfo = info;
         this.issuer = issuerBundle;
+    }
+
+    // Rehydrates a PKI around an already-created issuer bundle. This is useful
+    // for services that persist their CA material and need stable issuer
+    // identity across process restarts.
+    private QuickPki(Provider provider, IssuerInfo info, CertificateBundle issuerBundle) {
+        this.parent = null;
+        this.provider = provider;
+        this.issuerInfo = info;
+        this.issuer = Objects.requireNonNull(issuerBundle, "issuerBundle must not be null");
     }
 
     private KeyPair newKeyPair() throws GeneralSecurityException {
@@ -125,7 +136,7 @@ public class QuickPki {
     // digitalSignature|keyEncipherment; EC gets digitalSignature|keyAgreement
     // because keyEncipherment is RSA key-transport semantics and some strict
     // validators reject it on EC certs.
-    private KeyUsage leafKeyUsageFor(KeyPair keyPair, CertInfo info) {
+    private KeyUsage leafKeyUsageFor(PublicKey publicKey, CertInfo info) {
         if (info.getKeyUsages() != null) {
             int bits = 0;
             for (KeyUsageBit b : info.getKeyUsages()) {
@@ -133,7 +144,7 @@ public class QuickPki {
             }
             return new KeyUsage(bits);
         }
-        String algo = keyPair.getPublic().getAlgorithm();
+        String algo = publicKey.getAlgorithm();
         if ("EC".equalsIgnoreCase(algo)) {
             return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyAgreement);
         }
@@ -163,6 +174,33 @@ public class QuickPki {
 
     public static QuickPki create(IssuerInfo issuerInfo) {
         return new QuickPki(ensureBouncyCastleProvider(), issuerInfo);
+    }
+
+    /**
+     * Rehydrates a {@link QuickPki} around an already-built issuer bundle so a
+     * service can keep its CA identity stable across restarts. The bundle must
+     * carry the issuer's signing key: this PKI will use {@code
+     * issuerBundle.getKeyPair().getPrivate()} on every issuance, and we'd
+     * rather fail fast here than NPE deep inside BouncyCastle later.
+     *
+     * @throws NullPointerException     if {@code issuerInfo} or {@code issuerBundle} is null
+     * @throws IllegalArgumentException if the bundle has no key pair / private key,
+     *                                  or its certificate is not a CA
+     */
+    public static QuickPki fromIssuer(IssuerInfo issuerInfo, CertificateBundle issuerBundle) {
+        Objects.requireNonNull(issuerInfo, "issuerInfo must not be null");
+        Objects.requireNonNull(issuerBundle, "issuerBundle must not be null");
+        KeyPair keyPair = issuerBundle.getKeyPair();
+        if (keyPair == null || keyPair.getPrivate() == null) {
+            throw new IllegalArgumentException(
+                    "issuerBundle must carry a private key; cannot sign certificates without one");
+        }
+        X509Certificate cert = issuerBundle.getCertificate();
+        if (cert.getBasicConstraints() < 0) {
+            throw new IllegalArgumentException(
+                    "issuerBundle certificate is not a CA (basicConstraints cA=false or absent)");
+        }
+        return new QuickPki(ensureBouncyCastleProvider(), issuerInfo, issuerBundle);
     }
 
     private static Provider ensureBouncyCastleProvider() {
@@ -260,11 +298,35 @@ public class QuickPki {
 
     public CertificateBundle issueCertificate(CertInfo info) {
         try {
-            return intIssueCertificate(info);
+            KeyPair keyPair = newKeyPair();
+            return intIssueCertificate(info, keyPair.getPublic(), keyPair);
         } catch (IllegalArgumentException e) {
             // Bad caller input (eg. inverted validity range): bubble directly
             // so the message reaches the caller without 'Failed to issue
             // certificate' framing it as a library-internal failure.
+            throw e;
+        } catch (Exception e) {
+            throw new QuickPkiException("Failed to issue certificate", e);
+        }
+    }
+
+    /**
+     * Issues a leaf certificate that binds {@code publicKey} to the subject in
+     * {@code info}. Intended for CSR-style flows (eg. ACME) where the subscriber
+     * generated the key pair and only the public half ever leaves their host.
+     * <p>
+     * The returned {@link CertificateBundle} therefore has a {@code KeyPair}
+     * whose private half is {@code null}. Helpers that need the private key
+     * ({@link CertificateBundle#toPrivateKeyPem()}, {@link
+     * CertificateBundle#toKeyStore(String, char[])}) will throw
+     * {@link QuickPkiException} on such a bundle - serve the cert/chain PEM
+     * back to the subscriber and let them pair it with the key they retained.
+     */
+    public CertificateBundle issueCertificate(CertInfo info, PublicKey publicKey) {
+        Objects.requireNonNull(publicKey, "publicKey must not be null");
+        try {
+            return intIssueCertificate(info, publicKey, new KeyPair(publicKey, null));
+        } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
             throw new QuickPkiException("Failed to issue certificate", e);
@@ -324,13 +386,12 @@ public class QuickPki {
         return new QuickPki(this, this.issuerInfo, intermediateBundle);
     }
 
-    private CertificateBundle intIssueCertificate(CertInfo info) throws Exception {
+    private CertificateBundle intIssueCertificate(CertInfo info, PublicKey publicKey, KeyPair keyPair) throws Exception {
 
         Validity validity = resolveValidity(info);
         Date startDate = Date.from(validity.start());
         Date endDate = Date.from(validity.end());
 
-        KeyPair keyPair = newKeyPair();
         BigInteger serialNum = newSerialNumber();
 
         X500Name issuerSubject = new JcaX509CertificateHolder(issuer.getCertificate()).getSubject();
@@ -344,14 +405,14 @@ public class QuickPki {
                 .setProvider(provider).build(this.issuer.getKeyPair().getPrivate());
         X509v3CertificateBuilder certificateBuilder =
                 new JcaX509v3CertificateBuilder(issuerSubject, serialNum,
-                        startDate, endDate, subject, keyPair.getPublic());
+                        startDate, endDate, subject, publicKey);
 
         JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
         certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
-        certificateBuilder.addExtension(Extension.keyUsage, true, leafKeyUsageFor(keyPair, info));
+        certificateBuilder.addExtension(Extension.keyUsage, true, leafKeyUsageFor(publicKey, info));
         certificateBuilder.addExtension(Extension.extendedKeyUsage, false, leafEkuFor(info));
         certificateBuilder.addExtension(Extension.subjectKeyIdentifier, false,
-                extUtils.createSubjectKeyIdentifier(keyPair.getPublic()));
+                extUtils.createSubjectKeyIdentifier(publicKey));
         certificateBuilder.addExtension(Extension.authorityKeyIdentifier, false,
                 extUtils.createAuthorityKeyIdentifier(issuer.getCertificate()));
 

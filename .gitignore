@@ -1,6 +1,10 @@
 # Maven build output
 target/
 
+# Node build output
+node_modules/
+dist/
+
 # IDE
 .idea/
 *.iml
@@ -9,3 +13,7 @@ target/
 
 # OS
 .DS_Store
+
+# Smoketest secrets
+smoketest/cloudflare.ini
+smoketest/certbot/

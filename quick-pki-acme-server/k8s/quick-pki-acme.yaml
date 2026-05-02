@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: quick-pki-acme
+type: Opaque
+stringData:
+  JDBC_USER: quickpki
+  JDBC_PASSWORD: quickpki
+  ACME_CA_KEY_PASSWORD: change-this-before-use
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quick-pki-acme
+data:
+  PORT: "8080"
+  ACME_EXTERNAL_URL: "http://quick-pki-acme.default.svc.cluster.local:8080"
+  JDBC_URL: "jdbc:postgresql://quick-pki-postgres.default.svc.cluster.local:5432/quickpki"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quick-pki-acme
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quick-pki-acme
+  template:
+    metadata:
+      labels:
+        app: quick-pki-acme
+    spec:
+      containers:
+        - name: quick-pki-acme
+          image: quick-pki-acme-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: quick-pki-acme
+            - secretRef:
+                name: quick-pki-acme
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: quick-pki-acme
+spec:
+  selector:
+    app: quick-pki-acme
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
