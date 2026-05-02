@@ -24,6 +24,11 @@ public final class IssuerInfo {
         this.keyAlgorithm = builder.keyAlgorithm != null ? builder.keyAlgorithm
                 : KeyAlgorithm.rsa(2048);
         this.signatureAlgorithm = builder.signatureAlgorithm;
+        if (this.validFrom.isAfter(this.validUntil)) {
+            throw new IllegalArgumentException(
+                    "validFrom (" + this.validFrom + ") must not be after validUntil ("
+                            + this.validUntil + ")");
+        }
     }
 
     public static Builder builder() {

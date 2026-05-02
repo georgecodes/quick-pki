@@ -93,11 +93,18 @@ public class QuickPki {
     }
 
     // Resolves a CertInfo's start/end Instants, defaulting to now() and
-    // start+issuerInfo.defaultLifespan respectively when omitted.
+    // start+issuerInfo.defaultLifespan respectively when omitted. Catches
+    // the case where the caller pinned only one bound to a value that
+    // would invert the resolved range (eg. validUntil in the past with no
+    // explicit validFrom).
     private Validity resolveValidity(CertInfo info) {
         Instant start = info.getValidFrom() != null ? info.getValidFrom() : Instant.now();
         Instant end = info.getValidUntil() != null ? info.getValidUntil()
                 : start.plus(issuerInfo.getDefaultLifespan());
+        if (start.isAfter(end)) {
+            throw new IllegalArgumentException(
+                    "validFrom (" + start + ") must not be after validUntil (" + end + ")");
+        }
         return new Validity(start, end);
     }
 
@@ -229,6 +236,11 @@ public class QuickPki {
     public CertificateBundle issueCertificate(CertInfo info) {
         try {
             return intIssueCertificate(info);
+        } catch (IllegalArgumentException e) {
+            // Bad caller input (eg. inverted validity range): bubble directly
+            // so the message reaches the caller without 'Failed to issue
+            // certificate' framing it as a library-internal failure.
+            throw e;
         } catch (Exception e) {
             throw new QuickPkiException("Failed to issue certificate", e);
         }
@@ -245,6 +257,8 @@ public class QuickPki {
         }
         try {
             return intIssueIntermediate(info);
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             throw new QuickPkiException("Failed to issue intermediate CA", e);
         }

@@ -19,6 +19,14 @@ public final class CertInfo {
         this.validUntil = builder.validUntil;
         this.dnsNames = List.copyOf(builder.dnsNames);
         this.ipAddresses = List.copyOf(builder.ipAddresses);
+        // Eager guard for the case where the caller set both fields. The
+        // late case (one defaulted from IssuerInfo) is caught at issue time.
+        if (this.validFrom != null && this.validUntil != null
+                && this.validFrom.isAfter(this.validUntil)) {
+            throw new IllegalArgumentException(
+                    "validFrom (" + this.validFrom + ") must not be after validUntil ("
+                            + this.validUntil + ")");
+        }
     }
 
     public static Builder builder() {
