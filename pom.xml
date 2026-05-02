@@ -101,6 +101,13 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
+                <configuration>
+                    <!-- We deliberately don't write public Javadoc on every
+                         builder method; the bean-style names are
+                         self-documenting. Suppress the noisy 'no comment'
+                         warnings from the standard doclint checks. -->
+                    <doclint>none</doclint>
+                </configuration>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>

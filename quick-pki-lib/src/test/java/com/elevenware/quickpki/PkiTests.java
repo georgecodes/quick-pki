@@ -996,6 +996,79 @@ public class PkiTests {
                 "message should mention validFrom, got: " + ex.getMessage());
     }
 
+    @Test
+    void leafKeyUsageHonoursCallerOverride() {
+        QuickPki pki = QuickPki.createDefault();
+
+        // Code-signing certs typically only need digitalSignature; explicitly
+        // omit keyEncipherment to override the RSA default.
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Code Signer").build())
+                .keyUsage(KeyUsageBit.DIGITAL_SIGNATURE)
+                .build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage);
+        assertTrue(keyUsage[0], "explicitly-set digitalSignature must be present");
+        assertFalse(keyUsage[2], "default keyEncipherment must NOT be added when override set");
+    }
+
+    @Test
+    void leafEkuHonoursCallerOverride() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Code Signer").build())
+                .extendedKeyUsage(ExtendedKeyUsageId.CODE_SIGNING)
+                .build());
+
+        List<String> eku = bundle.getCertificate().getExtendedKeyUsage();
+        assertNotNull(eku);
+        assertEquals(1, eku.size(), "only the explicitly-set EKU should be present");
+        assertEquals(KeyPurposeId.id_kp_codeSigning.getId(), eku.get(0));
+    }
+
+    @Test
+    void leafKeyUsageDefaultStillAppliesWhenOverrideUnset() {
+        QuickPki pki = QuickPki.createDefault();
+
+        // No keyUsage / extendedKeyUsage set on CertInfo - defaults must still
+        // apply (RSA leaf gets digitalSignature + keyEncipherment).
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Default").build())
+                .build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertTrue(keyUsage[0], "default RSA leaf must have digitalSignature");
+        assertTrue(keyUsage[2], "default RSA leaf must have keyEncipherment");
+    }
+
+    @Test
+    void multipleKeyUsageBitsCanBeOred() {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Multi").build())
+                .keyUsage(KeyUsageBit.DIGITAL_SIGNATURE)
+                .keyUsage(KeyUsageBit.NON_REPUDIATION)
+                .keyUsage(KeyUsageBit.DATA_ENCIPHERMENT)
+                .build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertTrue(keyUsage[0], "digitalSignature");
+        assertTrue(keyUsage[1], "nonRepudiation");
+        assertTrue(keyUsage[3], "dataEncipherment");
+        assertFalse(keyUsage[2], "keyEncipherment NOT in override set");
+    }
+
+    @Test
+    void keyUsageBuilderRejectsNull() {
+        assertThrows(NullPointerException.class,
+                () -> CertInfo.builder().keyUsage(null));
+        assertThrows(NullPointerException.class,
+                () -> CertInfo.builder().extendedKeyUsage(null));
+    }
+
     @BeforeAll
     static void setup() {
         Security.addProvider(new BouncyCastleProvider());

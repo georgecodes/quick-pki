@@ -2,8 +2,11 @@ package com.elevenware.quickpki;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 public final class CertInfo {
 
@@ -12,6 +15,8 @@ public final class CertInfo {
     private final Instant validUntil;
     private final List<String> dnsNames;
     private final List<String> ipAddresses;
+    private final Set<KeyUsageBit> keyUsages;
+    private final Set<ExtendedKeyUsageId> extendedKeyUsages;
 
     private CertInfo(Builder builder) {
         this.subjectName = builder.subjectName;
@@ -19,6 +24,13 @@ public final class CertInfo {
         this.validUntil = builder.validUntil;
         this.dnsNames = List.copyOf(builder.dnsNames);
         this.ipAddresses = List.copyOf(builder.ipAddresses);
+        // null vs non-null distinguishes 'use the algorithm-aware default'
+        // from 'use exactly these'. Defensive copy; immutable view returned
+        // from the getter.
+        this.keyUsages = builder.keyUsages == null ? null
+                : Collections.unmodifiableSet(EnumSet.copyOf(builder.keyUsages));
+        this.extendedKeyUsages = builder.extendedKeyUsages == null ? null
+                : Collections.unmodifiableSet(EnumSet.copyOf(builder.extendedKeyUsages));
         // Eager guard for the case where the caller set both fields. The
         // late case (one defaulted from IssuerInfo) is caught at issue time.
         if (this.validFrom != null && this.validUntil != null
@@ -53,6 +65,17 @@ public final class CertInfo {
         return ipAddresses;
     }
 
+    // Null when the caller hasn't expressed a preference (QuickPki picks an
+    // algorithm-aware default). Non-null when the caller specified an explicit
+    // override via Builder.keyUsage(...).
+    public Set<KeyUsageBit> getKeyUsages() {
+        return keyUsages;
+    }
+
+    public Set<ExtendedKeyUsageId> getExtendedKeyUsages() {
+        return extendedKeyUsages;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -61,12 +84,15 @@ public final class CertInfo {
                 && Objects.equals(validFrom, that.validFrom)
                 && Objects.equals(validUntil, that.validUntil)
                 && Objects.equals(dnsNames, that.dnsNames)
-                && Objects.equals(ipAddresses, that.ipAddresses);
+                && Objects.equals(ipAddresses, that.ipAddresses)
+                && Objects.equals(keyUsages, that.keyUsages)
+                && Objects.equals(extendedKeyUsages, that.extendedKeyUsages);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(subjectName, validFrom, validUntil, dnsNames, ipAddresses);
+        return Objects.hash(subjectName, validFrom, validUntil, dnsNames,
+                ipAddresses, keyUsages, extendedKeyUsages);
     }
 
     @Override
@@ -77,6 +103,8 @@ public final class CertInfo {
                 + ", validUntil=" + validUntil
                 + ", dnsNames=" + dnsNames
                 + ", ipAddresses=" + ipAddresses
+                + ", keyUsages=" + keyUsages
+                + ", extendedKeyUsages=" + extendedKeyUsages
                 + '}';
     }
 
@@ -86,6 +114,8 @@ public final class CertInfo {
         private Instant validUntil;
         private final List<String> dnsNames = new ArrayList<>();
         private final List<String> ipAddresses = new ArrayList<>();
+        private EnumSet<KeyUsageBit> keyUsages;
+        private EnumSet<ExtendedKeyUsageId> extendedKeyUsages;
 
         private Builder() {
         }
@@ -112,6 +142,29 @@ public final class CertInfo {
 
         public Builder ipAddress(String ipAddress) {
             this.ipAddresses.add(Objects.requireNonNull(ipAddress, "ipAddress must not be null"));
+            return this;
+        }
+
+        // Add a KeyUsage bit. Calling this any number of times overrides the
+        // algorithm-aware default that QuickPki would otherwise pick. Unset
+        // (no calls) means use the default.
+        public Builder keyUsage(KeyUsageBit bit) {
+            Objects.requireNonNull(bit, "keyUsage bit must not be null");
+            if (this.keyUsages == null) {
+                this.keyUsages = EnumSet.noneOf(KeyUsageBit.class);
+            }
+            this.keyUsages.add(bit);
+            return this;
+        }
+
+        // Add an ExtendedKeyUsage purpose. Same override semantics as
+        // keyUsage(...) - default is serverAuth + clientAuth on leaves.
+        public Builder extendedKeyUsage(ExtendedKeyUsageId id) {
+            Objects.requireNonNull(id, "extendedKeyUsage id must not be null");
+            if (this.extendedKeyUsages == null) {
+                this.extendedKeyUsages = EnumSet.noneOf(ExtendedKeyUsageId.class);
+            }
+            this.extendedKeyUsages.add(id);
             return this;
         }
 
