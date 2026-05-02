@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.security.Security;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateExpiredException;
@@ -21,7 +22,9 @@ import java.util.Date;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -161,6 +164,95 @@ public class PkiTests {
         assertEquals("12345", dnQualifier);
         assertEquals("London", locality);
         assertEquals("London", stateOrProvince);
+    }
+
+    // Regression: defaulted SubjectName was discarded; calling issueCertificate
+    // with an empty CertInfo NPE'd because the raw info.getSubjectName() was
+    // passed to the DN builder rather than the local default.
+    @Test
+    void issueCertificateWithoutSubjectNameUsesDefault() {
+        QuickPki pki = QuickPki.createDefault();
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder().build());
+        assertEquals("Default Subject", bundle.getCommonName());
+    }
+
+    // Regression: issued leaves were marked basicConstraints CA:TRUE.
+    // X509Certificate.getBasicConstraints() returns -1 for non-CA, otherwise
+    // the path-length constraint (Integer.MAX_VALUE if none).
+    @Test
+    void issuedLeafIsNotMarkedAsCa() {
+        QuickPki pki = QuickPki.createDefault();
+        CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .build());
+
+        assertEquals(-1, leaf.getCertificate().getBasicConstraints(),
+                "leaf must not be a CA");
+        assertNotEquals(-1, pki.getIssuer().getCertificate().getBasicConstraints(),
+                "root must remain a CA");
+    }
+
+    // Regression: serial numbers were built from BigInteger(Long.toString(SecureRandom.nextLong())),
+    // which yields negative values ~50% of the time. RFC 5280 §4.1.2.2 requires
+    // positive serials and caps them at 20 octets (159 bits unsigned).
+    @Test
+    void serialNumbersArePositiveAndWithinRfcBounds() {
+        QuickPki pki = QuickPki.createDefault();
+        BigInteger rootSerial = pki.getIssuer().getCertificate().getSerialNumber();
+        assertEquals(1, rootSerial.signum(), "root serial must be positive");
+        assertTrue(rootSerial.bitLength() <= 159, "root serial exceeds RFC 5280 bounds");
+
+        for (int i = 0; i < 16; i++) {
+            BigInteger serial = pki.issueCertificate(CertInfo.builder()
+                    .subjectName(SubjectName.builder().commonName("Leaf " + i).build())
+                    .build())
+                    .getCertificate().getSerialNumber();
+            assertEquals(1, serial.signum(), "leaf serial must be positive");
+            assertTrue(serial.bitLength() <= 159, "leaf serial exceeds RFC 5280 bounds");
+        }
+    }
+
+    // Regression: createDefault() fetched Security.getProvider("BC") and
+    // silently passed null to BC builders if the caller hadn't pre-registered
+    // BouncyCastle. The factory must self-register when missing.
+    @Test
+    void createDefaultRegistersBouncyCastleWhenMissing() {
+        Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME);
+        try {
+            assertNull(Security.getProvider(BouncyCastleProvider.PROVIDER_NAME),
+                    "precondition: BC must be unregistered for this test");
+
+            QuickPki pki = QuickPki.createDefault();
+
+            assertNotNull(pki.getIssuer());
+            assertNotNull(Security.getProvider(BouncyCastleProvider.PROVIDER_NAME),
+                    "createDefault should have registered BC");
+        } finally {
+            if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+                Security.addProvider(new BouncyCastleProvider());
+            }
+        }
+    }
+
+    // Regression: subject DNs were assembled by string concatenation with ", "
+    // separators and re-parsed via new X500Name(...). A common name containing
+    // a comma could inject extra RDNs ('Innocent, O=Evil' became CN=Innocent + O=Evil).
+    @Test
+    void commonNameWithCommaIsNotInjectedAsAdditionalRdn() throws CertificateEncodingException {
+        QuickPki pki = QuickPki.createDefault();
+        String adversarialCn = "Innocent, O=Evil";
+
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName(adversarialCn).build())
+                .build());
+
+        X500Name subject = new JcaX509CertificateHolder(bundle.getCertificate()).getSubject();
+        assertEquals(1, subject.getRDNs(BCStyle.CN).length, "subject must have exactly one CN");
+        assertEquals(adversarialCn,
+                subject.getRDNs(BCStyle.CN)[0].getFirst().getValue().toString(),
+                "the comma must remain part of the CN value, not introduce a new RDN");
+        assertEquals(0, subject.getRDNs(BCStyle.O).length,
+                "no Organization RDN should have been injected");
     }
 
     @BeforeAll

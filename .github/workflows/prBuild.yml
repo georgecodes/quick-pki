@@ -17,4 +17,4 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
       - name: Run library tests
-        run: mvn -pl quick-pki-lib clean test
+        run: mvn -pl quick-pki-lib clean verify
