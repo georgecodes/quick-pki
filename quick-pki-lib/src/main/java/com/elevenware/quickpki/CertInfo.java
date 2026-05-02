@@ -98,12 +98,12 @@ public final class CertInfo {
         }
 
         public Builder dnsName(String dnsName) {
-            this.dnsNames.add(dnsName);
+            this.dnsNames.add(Objects.requireNonNull(dnsName, "dnsName must not be null"));
             return this;
         }
 
         public Builder ipAddress(String ipAddress) {
-            this.ipAddresses.add(ipAddress);
+            this.ipAddresses.add(Objects.requireNonNull(ipAddress, "ipAddress must not be null"));
             return this;
         }
 

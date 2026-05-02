@@ -63,6 +63,16 @@ public class QuickPki {
         return generator.generateKeyPair();
     }
 
+    // RFC 5280 §4.1.2.2 requires the serial to be a positive integer (1..2^159-1).
+    // BigInteger(159, random) draws uniformly over [0, 2^159), so we reject 0.
+    private BigInteger newSerialNumber() {
+        BigInteger serial;
+        do {
+            serial = new BigInteger(159, secureRandom);
+        } while (serial.signum() == 0);
+        return serial;
+    }
+
 
     public static QuickPki createDefault() {
         return new QuickPki(ensureBouncyCastleProvider(), IssuerInfo.builder().build());
@@ -93,7 +103,7 @@ public class QuickPki {
                 .from(info.getValidUntil());
 
         KeyPair rootKeyPair = newKeyPair();
-        BigInteger rootSerialNum = new BigInteger(159, secureRandom);
+        BigInteger rootSerialNum = newSerialNumber();
 
         SubjectName subjectName = Optional.ofNullable(info.getSubjectName())
                 .orElse(SubjectName.builder()
@@ -149,7 +159,7 @@ public class QuickPki {
                 .from(end);
 
         KeyPair keyPair = newKeyPair();
-        BigInteger serialNum = new BigInteger(159, secureRandom);
+        BigInteger serialNum = newSerialNumber();
 
         X500Name issuerSubject = new JcaX509CertificateHolder(issuer.getCertificate()).getSubject();
 

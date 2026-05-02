@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.security.Provider;
 import java.security.Security;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateExpiredException;
@@ -232,6 +233,18 @@ public class PkiTests {
     // BouncyCastle. The factory must self-register when missing.
     @Test
     void createDefaultRegistersBouncyCastleWhenMissing() {
+        Provider originalBc = Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
+        int originalPosition = -1;
+        if (originalBc != null) {
+            Provider[] providers = Security.getProviders();
+            for (int i = 0; i < providers.length; i++) {
+                if (providers[i] == originalBc) {
+                    // Security.insertProviderAt is 1-based.
+                    originalPosition = i + 1;
+                    break;
+                }
+            }
+        }
         Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME);
         try {
             assertNull(Security.getProvider(BouncyCastleProvider.PROVIDER_NAME),
@@ -243,8 +256,12 @@ public class PkiTests {
             assertNotNull(Security.getProvider(BouncyCastleProvider.PROVIDER_NAME),
                     "createDefault should have registered BC");
         } finally {
-            if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
-                Security.addProvider(new BouncyCastleProvider());
+            // Restore the exact original instance at its original index so
+            // provider-ordering-sensitive algorithm selection is unchanged
+            // for any test that runs after this one.
+            if (originalBc != null) {
+                Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME);
+                Security.insertProviderAt(originalBc, originalPosition);
             }
         }
     }
@@ -447,6 +464,22 @@ public class PkiTests {
 
         assertNotNull(ex.getMessage(), "wrapped exception must carry a message");
         assertNotNull(ex.getCause(), "wrapped exception must preserve the underlying cause");
+    }
+
+    @Test
+    void dnsNameRejectsNullWithClearMessage() {
+        NullPointerException ex = assertThrows(NullPointerException.class,
+                () -> CertInfo.builder().dnsName(null));
+        assertTrue(ex.getMessage() != null && ex.getMessage().contains("dnsName"),
+                "NPE message must name the rejected parameter, got: " + ex.getMessage());
+    }
+
+    @Test
+    void ipAddressRejectsNullWithClearMessage() {
+        NullPointerException ex = assertThrows(NullPointerException.class,
+                () -> CertInfo.builder().ipAddress(null));
+        assertTrue(ex.getMessage() != null && ex.getMessage().contains("ipAddress"),
+                "NPE message must name the rejected parameter, got: " + ex.getMessage());
     }
 
     @BeforeAll
