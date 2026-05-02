@@ -482,6 +482,80 @@ public class PkiTests {
                 "NPE message must name the rejected parameter, got: " + ex.getMessage());
     }
 
+    @Test
+    void defaultPkiUsesRsa2048AndSha256() {
+        QuickPki pki = QuickPki.createDefault();
+
+        X509Certificate root = pki.getIssuer().getCertificate();
+        assertEquals("RSA", root.getPublicKey().getAlgorithm());
+        assertTrue("SHA256withRSA".equalsIgnoreCase(root.getSigAlgName()),
+                "expected SHA256withRSA, got " + root.getSigAlgName());
+    }
+
+    @Test
+    void canOverrideRsaKeySize() {
+        QuickPki pki = QuickPki.create(IssuerInfo.builder()
+                .keyAlgorithm(KeyAlgorithm.rsa(3072))
+                .build());
+
+        X509Certificate root = pki.getIssuer().getCertificate();
+        java.security.interfaces.RSAPublicKey rsaKey =
+                (java.security.interfaces.RSAPublicKey) root.getPublicKey();
+        assertEquals(3072, rsaKey.getModulus().bitLength());
+
+        CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .build());
+        assertTrue(leaf.issuedBy(pki.getIssuer()));
+        assertEquals(3072, ((java.security.interfaces.RSAPublicKey)
+                leaf.getCertificate().getPublicKey()).getModulus().bitLength());
+    }
+
+    @Test
+    void canIssueWithEcKeysAndDefaultEcdsaSignature() {
+        QuickPki pki = QuickPki.create(IssuerInfo.builder()
+                .keyAlgorithm(KeyAlgorithm.ec("secp256r1"))
+                .build());
+
+        X509Certificate root = pki.getIssuer().getCertificate();
+        assertEquals("EC", root.getPublicKey().getAlgorithm());
+        assertEquals("SHA256WITHECDSA", root.getSigAlgName().toUpperCase());
+
+        CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("EC Leaf").build())
+                .build());
+        assertEquals("EC", leaf.getCertificate().getPublicKey().getAlgorithm());
+        assertTrue(leaf.issuedBy(pki.getIssuer()),
+                "EC-issued leaf must verify against its EC issuer");
+    }
+
+    @Test
+    void canOverrideSignatureAlgorithmIndependently() {
+        QuickPki pki = QuickPki.create(IssuerInfo.builder()
+                .keyAlgorithm(KeyAlgorithm.rsa(2048))
+                .signatureAlgorithm("SHA384withRSA")
+                .build());
+
+        String rootSigAlg = pki.getIssuer().getCertificate().getSigAlgName();
+        assertTrue("SHA384withRSA".equalsIgnoreCase(rootSigAlg),
+                "expected SHA384withRSA, got " + rootSigAlg);
+
+        CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Leaf").build())
+                .build());
+        String leafSigAlg = leaf.getCertificate().getSigAlgName();
+        assertTrue("SHA384withRSA".equalsIgnoreCase(leafSigAlg),
+                "expected SHA384withRSA, got " + leafSigAlg);
+    }
+
+    @Test
+    void rsaKeyAlgorithmRejectsTooSmallKeySize() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> KeyAlgorithm.rsa(1024));
+        assertTrue(ex.getMessage().contains("2048"),
+                "rejection should mention the minimum, got: " + ex.getMessage());
+    }
+
     @BeforeAll
     static void setup() {
         Security.addProvider(new BouncyCastleProvider());

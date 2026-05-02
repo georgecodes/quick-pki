@@ -11,6 +11,8 @@ public final class IssuerInfo {
     private final Instant validFrom;
     private final Instant validUntil;
     private final Duration defaultLifespan;
+    private final KeyAlgorithm keyAlgorithm;
+    private final String signatureAlgorithm;
 
     private IssuerInfo(Builder builder) {
         this.subjectName = builder.subjectName;
@@ -19,6 +21,9 @@ public final class IssuerInfo {
                 : Instant.now().plus(1, ChronoUnit.DAYS);
         this.defaultLifespan = builder.defaultLifespan != null ? builder.defaultLifespan
                 : Duration.ofDays(1L);
+        this.keyAlgorithm = builder.keyAlgorithm != null ? builder.keyAlgorithm
+                : KeyAlgorithm.rsa(2048);
+        this.signatureAlgorithm = builder.signatureAlgorithm;
     }
 
     public static Builder builder() {
@@ -41,6 +46,17 @@ public final class IssuerInfo {
         return defaultLifespan;
     }
 
+    public KeyAlgorithm getKeyAlgorithm() {
+        return keyAlgorithm;
+    }
+
+    // Returns the explicitly configured signature algorithm, or the default
+    // implied by the key algorithm if none was set.
+    public String getEffectiveSignatureAlgorithm() {
+        return signatureAlgorithm != null ? signatureAlgorithm
+                : keyAlgorithm.defaultSignatureAlgorithm();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -48,12 +64,15 @@ public final class IssuerInfo {
         return Objects.equals(subjectName, that.subjectName)
                 && Objects.equals(validFrom, that.validFrom)
                 && Objects.equals(validUntil, that.validUntil)
-                && Objects.equals(defaultLifespan, that.defaultLifespan);
+                && Objects.equals(defaultLifespan, that.defaultLifespan)
+                && Objects.equals(keyAlgorithm, that.keyAlgorithm)
+                && Objects.equals(signatureAlgorithm, that.signatureAlgorithm);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(subjectName, validFrom, validUntil, defaultLifespan);
+        return Objects.hash(subjectName, validFrom, validUntil, defaultLifespan,
+                keyAlgorithm, signatureAlgorithm);
     }
 
     @Override
@@ -63,6 +82,8 @@ public final class IssuerInfo {
                 + ", validFrom=" + validFrom
                 + ", validUntil=" + validUntil
                 + ", defaultLifespan=" + defaultLifespan
+                + ", keyAlgorithm=" + keyAlgorithm
+                + ", signatureAlgorithm=" + signatureAlgorithm
                 + '}';
     }
 
@@ -71,6 +92,8 @@ public final class IssuerInfo {
         private Instant validFrom;
         private Instant validUntil;
         private Duration defaultLifespan;
+        private KeyAlgorithm keyAlgorithm;
+        private String signatureAlgorithm;
 
         private Builder() {
         }
@@ -92,6 +115,16 @@ public final class IssuerInfo {
 
         public Builder defaultLifespan(Duration defaultLifespan) {
             this.defaultLifespan = defaultLifespan;
+            return this;
+        }
+
+        public Builder keyAlgorithm(KeyAlgorithm keyAlgorithm) {
+            this.keyAlgorithm = keyAlgorithm;
+            return this;
+        }
+
+        public Builder signatureAlgorithm(String signatureAlgorithm) {
+            this.signatureAlgorithm = signatureAlgorithm;
             return this;
         }
 
