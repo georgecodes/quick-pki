@@ -101,6 +101,13 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
+                <configuration>
+                    <!-- Silence the noisy 'no comment' warnings on
+                         self-documenting builder methods, but keep the
+                         other doclint groups (HTML, syntax, references)
+                         active so real Javadoc problems still surface. -->
+                    <doclint>all,-missing</doclint>
+                </configuration>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>

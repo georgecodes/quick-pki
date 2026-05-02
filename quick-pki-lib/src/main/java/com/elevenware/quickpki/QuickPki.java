@@ -120,15 +120,40 @@ public class QuickPki {
         return serial;
     }
 
-    // KeyUsage.keyEncipherment is RSA key-transport semantics; for EC keys it is
-    // meaningless and some strict validators reject it. Use keyAgreement (ECDH)
-    // for EC, matching the convention that Let's Encrypt etc. follow.
-    private KeyUsage leafKeyUsageFor(KeyPair keyPair) {
+    // If the caller specified explicit KeyUsage bits on the CertInfo, OR them
+    // together. Otherwise default by key algorithm: RSA gets
+    // digitalSignature|keyEncipherment; EC gets digitalSignature|keyAgreement
+    // because keyEncipherment is RSA key-transport semantics and some strict
+    // validators reject it on EC certs.
+    private KeyUsage leafKeyUsageFor(KeyPair keyPair, CertInfo info) {
+        if (info.getKeyUsages() != null) {
+            int bits = 0;
+            for (KeyUsageBit b : info.getKeyUsages()) {
+                bits |= b.bit();
+            }
+            return new KeyUsage(bits);
+        }
         String algo = keyPair.getPublic().getAlgorithm();
         if ("EC".equalsIgnoreCase(algo)) {
             return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyAgreement);
         }
         return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment);
+    }
+
+    // If the caller specified explicit ExtendedKeyUsage purposes, use those
+    // verbatim. Otherwise default to serverAuth + clientAuth, the right shape
+    // for both server and client TLS scenarios.
+    private ExtendedKeyUsage leafEkuFor(CertInfo info) {
+        if (info.getExtendedKeyUsages() != null) {
+            KeyPurposeId[] purposes = info.getExtendedKeyUsages().stream()
+                    .map(ExtendedKeyUsageId::keyPurposeId)
+                    .toArray(KeyPurposeId[]::new);
+            return new ExtendedKeyUsage(purposes);
+        }
+        return new ExtendedKeyUsage(new KeyPurposeId[] {
+                KeyPurposeId.id_kp_serverAuth,
+                KeyPurposeId.id_kp_clientAuth
+        });
     }
 
 
@@ -323,12 +348,8 @@ public class QuickPki {
 
         JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
         certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
-        certificateBuilder.addExtension(Extension.keyUsage, true, leafKeyUsageFor(keyPair));
-        certificateBuilder.addExtension(Extension.extendedKeyUsage, false,
-                new ExtendedKeyUsage(new KeyPurposeId[] {
-                        KeyPurposeId.id_kp_serverAuth,
-                        KeyPurposeId.id_kp_clientAuth
-                }));
+        certificateBuilder.addExtension(Extension.keyUsage, true, leafKeyUsageFor(keyPair, info));
+        certificateBuilder.addExtension(Extension.extendedKeyUsage, false, leafEkuFor(info));
         certificateBuilder.addExtension(Extension.subjectKeyIdentifier, false,
                 extUtils.createSubjectKeyIdentifier(keyPair.getPublic()));
         certificateBuilder.addExtension(Extension.authorityKeyIdentifier, false,
