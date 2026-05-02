@@ -719,6 +719,27 @@ public class PkiTests {
         assertSame(root, intermediate.getParent());
     }
 
+    @Test
+    void issueIntermediateRejectsSanEntries() {
+        QuickPki root = QuickPki.createDefault();
+
+        IllegalArgumentException dnsEx = assertThrows(IllegalArgumentException.class,
+                () -> root.issueIntermediate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Bad CA").build())
+                        .dnsName("example.com")
+                        .build()));
+        assertTrue(dnsEx.getMessage().toLowerCase().contains("subject alternative"),
+                "rejection should mention SAN, got: " + dnsEx.getMessage());
+
+        IllegalArgumentException ipEx = assertThrows(IllegalArgumentException.class,
+                () -> root.issueIntermediate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Bad CA").build())
+                        .ipAddress("127.0.0.1")
+                        .build()));
+        assertTrue(ipEx.getMessage().toLowerCase().contains("subject alternative"),
+                "rejection should mention SAN, got: " + ipEx.getMessage());
+    }
+
     @BeforeAll
     static void setup() {
         Security.addProvider(new BouncyCastleProvider());
