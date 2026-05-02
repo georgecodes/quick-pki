@@ -236,6 +236,11 @@ public class QuickPki {
     public CertificateBundle issueCertificate(CertInfo info) {
         try {
             return intIssueCertificate(info);
+        } catch (IllegalArgumentException e) {
+            // Bad caller input (eg. inverted validity range): bubble directly
+            // so the message reaches the caller without 'Failed to issue
+            // certificate' framing it as a library-internal failure.
+            throw e;
         } catch (Exception e) {
             throw new QuickPkiException("Failed to issue certificate", e);
         }
@@ -252,6 +257,8 @@ public class QuickPki {
         }
         try {
             return intIssueIntermediate(info);
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             throw new QuickPkiException("Failed to issue intermediate CA", e);
         }

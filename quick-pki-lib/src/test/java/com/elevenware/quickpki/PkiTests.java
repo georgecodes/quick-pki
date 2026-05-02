@@ -149,21 +149,27 @@ public class PkiTests {
         Date notAfter = issuerCert.getNotAfter();
         assertEquals(end, notAfter.toInstant());
 
-        // intIssueCertificate calls Instant.now() to set the leaf's validFrom,
-        // then adds the issuer's defaultLifespan (1 minute here). We can't see
-        // that internal Instant.now(); compare against a window centred on
-        // 'expected' to avoid second-boundary flakiness on slow CI workers.
-        Instant expected = Instant.now().plus(1, ChronoUnit.MINUTES);
+        // intIssueCertificate calls Instant.now() internally to set the leaf's
+        // validFrom, then adds the issuer's defaultLifespan (1 minute here).
+        // The internal call happens at some moment T_internal in [before,
+        // after]. The cert stores notAfter at second precision (X.509
+        // GeneralizedTime), so truncate the bounds to the second before
+        // computing the window: leafNotAfter must lie in
+        // [floor(before)+1min, floor(after)+1min].
+        Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         CertificateBundle leaf = pki.issueCertificate(CertInfo.builder()
                 .subjectName(SubjectName.builder()
                         .commonName("My First Certificate").build())
                 .build());
+        Instant after = Instant.now().truncatedTo(ChronoUnit.SECONDS);
 
-        X509Certificate leafCert = leaf.getCertificate();
-        Instant leafNotAfter = leafCert.getNotAfter().toInstant();
-        long deltaSeconds = Math.abs(Duration.between(expected, leafNotAfter).getSeconds());
-        assertTrue(deltaSeconds <= 2,
-                "leaf notAfter should be within 2s of " + expected + ", was " + leafNotAfter);
+        Instant leafNotAfter = leaf.getCertificate().getNotAfter().toInstant();
+        Instant earliest = before.plus(1, ChronoUnit.MINUTES);
+        Instant latest = after.plus(1, ChronoUnit.MINUTES);
+        assertFalse(leafNotAfter.isBefore(earliest),
+                "leaf notAfter " + leafNotAfter + " should be >= " + earliest);
+        assertFalse(leafNotAfter.isAfter(latest),
+                "leaf notAfter " + leafNotAfter + " should be <= " + latest);
     }
 
     @Test
@@ -961,16 +967,33 @@ public class PkiTests {
         // validFrom unset (defaults to now()), validUntil in the distant past:
         // the resolved range inverts. The eager builder check can't see this -
         // it only fires when both bounds are explicit - so the late guard in
-        // QuickPki.resolveValidity() must catch it. The wrap path turns the
-        // IllegalArgumentException into a QuickPkiException whose cause we
-        // assert on.
-        QuickPkiException ex = assertThrows(QuickPkiException.class,
+        // QuickPki.resolveValidity() must catch it. IllegalArgumentException
+        // bubbles up directly from issueCertificate without being wrapped,
+        // so the caller gets the actionable message rather than 'Failed to
+        // issue certificate'.
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> pki.issueCertificate(CertInfo.builder()
                         .subjectName(SubjectName.builder().commonName("Past").build())
                         .validUntil(Instant.parse("2000-01-01T00:00:00Z"))
                         .build()));
-        assertTrue(ex.getCause() instanceof IllegalArgumentException,
-                "underlying cause must be IllegalArgumentException, was " + ex.getCause());
+        assertTrue(ex.getMessage().contains("validFrom") && ex.getMessage().contains("validUntil"),
+                "message should name both bounds, got: " + ex.getMessage());
+    }
+
+    @Test
+    void issueIntermediateRejectsValidUntilInPastWhenValidFromDefaults() {
+        QuickPki root = QuickPki.createDefault();
+
+        // resolveValidity is shared by issueCertificate AND issueIntermediate.
+        // Cover the intermediate path too so a regression in either entry
+        // point is caught.
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> root.issueIntermediate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Past CA").build())
+                        .validUntil(Instant.parse("2000-01-01T00:00:00Z"))
+                        .build()));
+        assertTrue(ex.getMessage().contains("validFrom"),
+                "message should mention validFrom, got: " + ex.getMessage());
     }
 
     @BeforeAll
