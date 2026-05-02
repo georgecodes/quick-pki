@@ -9,13 +9,13 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.NoSuchAlgorithmException;
 import java.security.Provider;
 import java.security.SecureRandom;
 import java.security.Security;
@@ -33,9 +33,10 @@ import java.util.Optional;
 public class QuickPki {
 
     private final IssuerInfo issuerInfo;
-    private KeyPairGenerator keyPairGenerator;
-    private Provider provider;
-    private CertificateBundle issuer;
+    private final KeyPairGenerator keyPairGenerator;
+    private final Provider provider;
+    private final SecureRandom secureRandom = new SecureRandom();
+    private final CertificateBundle issuer;
 
     private QuickPki(Provider provider, IssuerInfo info) {
         this.provider = provider;
@@ -44,24 +45,27 @@ public class QuickPki {
             keyPairGenerator = KeyPairGenerator.getInstance("RSA", provider);
             keyPairGenerator.initialize(2048);
             issuer = createIssuer(info);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-
     }
 
 
     public static QuickPki createDefault() {
-        Provider provider = Security.getProvider("BC");
-        IssuerInfo issuerInfo = IssuerInfo.builder().build();
-        return new QuickPki(provider, issuerInfo);
+        return new QuickPki(ensureBouncyCastleProvider(), IssuerInfo.builder().build());
     }
 
     public static QuickPki create(IssuerInfo issuerInfo) {
-        Provider provider = Security.getProvider("BC");
-        return new QuickPki(provider, issuerInfo);
+        return new QuickPki(ensureBouncyCastleProvider(), issuerInfo);
+    }
+
+    private static Provider ensureBouncyCastleProvider() {
+        Provider provider = Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
+        if (provider == null) {
+            provider = new BouncyCastleProvider();
+            Security.addProvider(provider);
+        }
+        return provider;
     }
 
     public CertificateBundle getIssuer() {
@@ -76,7 +80,7 @@ public class QuickPki {
                 .from(info.getValidUntil());
 
         KeyPair rootKeyPair = keyPairGenerator.generateKeyPair();
-        BigInteger rootSerialNum = new BigInteger(Long.toString(new SecureRandom().nextLong()));
+        BigInteger rootSerialNum = new BigInteger(159, secureRandom);
 
         SubjectName subjectName = Optional.ofNullable(info.getSubjectName())
                 .orElse(SubjectName.builder()
@@ -132,15 +136,15 @@ public class QuickPki {
                 .from(end);
 
         KeyPair keyPair = keyPairGenerator.generateKeyPair();
-        BigInteger serialNum = new BigInteger(Long.toString(new SecureRandom().nextLong()));
+        BigInteger serialNum = new BigInteger(159, secureRandom);
 
         X500Name issuerSubject = new JcaX509CertificateHolder(issuer.getCertificate()).getSubject();
 
         SubjectName subjectName = info.getSubjectName();
         if(subjectName == null) {
-            subjectName = SubjectName.builder().commonName("My Root Issuer").build();
+            subjectName = SubjectName.builder().commonName("Default Subject").build();
         }
-        String subjectNameString = buildSubjectName(info.getSubjectName());
+        String subjectNameString = buildSubjectName(subjectName);
 
         X500Name subject = new X500Name(subjectNameString);
         ContentSigner rootCertContentSigner = new JcaContentSignerBuilder("SHA256withRSA")
@@ -150,7 +154,7 @@ public class QuickPki {
                         startDate, endDate, subject, keyPair.getPublic());
 
         JcaX509ExtensionUtils rootCertExtUtils = new JcaX509ExtensionUtils();
-        certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
+        certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
         certificateBuilder.addExtension(Extension.subjectKeyIdentifier, false,
                 rootCertExtUtils.createSubjectKeyIdentifier(keyPair.getPublic()));
 
