@@ -433,6 +433,22 @@ public class PkiTests {
                 "no dnsName/ipAddress provided should mean no SAN extension");
     }
 
+    // Verifies bug #9: failures inside issueCertificate must be wrapped in
+    // QuickPkiException with both a meaningful message and the original cause
+    // preserved, instead of an opaque RuntimeException.
+    @Test
+    void issueCertificateWrapsUnderlyingFailuresInQuickPkiException() {
+        QuickPki pki = QuickPki.createDefault();
+
+        QuickPkiException ex = assertThrows(QuickPkiException.class, () ->
+                pki.issueCertificate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName(null).build())
+                        .build()));
+
+        assertNotNull(ex.getMessage(), "wrapped exception must carry a message");
+        assertNotNull(ex.getCause(), "wrapped exception must preserve the underlying cause");
+    }
+
     @BeforeAll
     static void setup() {
         Security.addProvider(new BouncyCastleProvider());

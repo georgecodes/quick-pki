@@ -27,7 +27,7 @@ public class CertificateBundle {
         try {
             this.holder = new JcaX509CertificateHolder(certificate);
         } catch (CertificateEncodingException e) {
-            throw new RuntimeException(e);
+            throw new QuickPkiException("Failed to parse certificate", e);
         }
         this.keyPair = keyPair;
         if(issuer == null) {
@@ -36,22 +36,19 @@ public class CertificateBundle {
     }
 
 
+    // Predicate: returns true iff `issuer` actually signed this certificate.
+    // Verification negatives (key doesn't match scheme, signature mismatch)
+    // return false. Infrastructure failures (missing algorithm/provider,
+    // malformed encoding) cannot answer the question and so throw.
     public boolean issuedBy(CertificateBundle issuer) {
-        X509Certificate issuerCert = issuer.getCertificate();
         try {
-            certificate.verify(issuerCert.getPublicKey());
-        } catch (CertificateException e) {
-            throw new RuntimeException(e);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        } catch (InvalidKeyException e) {
+            certificate.verify(issuer.getCertificate().getPublicKey());
+            return true;
+        } catch (InvalidKeyException | SignatureException e) {
             return false;
-        } catch (NoSuchProviderException e) {
-            throw new RuntimeException(e);
-        } catch (SignatureException e) {
-            return false;
+        } catch (CertificateException | NoSuchAlgorithmException | NoSuchProviderException e) {
+            throw new QuickPkiException("Failed to verify certificate signature", e);
         }
-        return true;
     }
 
     public X509Certificate getCertificate() {

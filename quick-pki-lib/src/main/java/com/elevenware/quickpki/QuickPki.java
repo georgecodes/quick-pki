@@ -53,7 +53,7 @@ public class QuickPki {
         try {
             issuer = createIssuer(info);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new QuickPkiException("Failed to build issuer certificate", e);
         }
     }
 
@@ -124,7 +124,7 @@ public class QuickPki {
         try {
             return intIssueCertificate(info);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new QuickPkiException("Failed to issue certificate", e);
         }
     }
 
