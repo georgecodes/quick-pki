@@ -1,6 +1,8 @@
 package com.elevenware.quickpki;
 
 import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x500.X500NameBuilder;
+import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.cert.X509CertificateHolder;
@@ -87,9 +89,7 @@ public class QuickPki {
                         .commonName("Default Root Issuer")
                         .build());
 
-        String rootSubjectName = buildSubjectName(subjectName);
-
-        X500Name rootCertIssuer = new X500Name(rootSubjectName);
+        X500Name rootCertIssuer = buildX500Name(subjectName);
         X500Name rootCertSubject = rootCertIssuer;
         ContentSigner rootCertContentSigner = new JcaContentSignerBuilder("SHA256withRSA")
                 .setProvider(provider).build(rootKeyPair.getPrivate());
@@ -144,9 +144,7 @@ public class QuickPki {
         if(subjectName == null) {
             subjectName = SubjectName.builder().commonName("Default Subject").build();
         }
-        String subjectNameString = buildSubjectName(subjectName);
-
-        X500Name subject = new X500Name(subjectNameString);
+        X500Name subject = buildX500Name(subjectName);
         ContentSigner rootCertContentSigner = new JcaContentSignerBuilder("SHA256withRSA")
                 .setProvider(provider).build(this.issuer.getKeyPair().getPrivate());
         X509v3CertificateBuilder certificateBuilder =
@@ -165,28 +163,27 @@ public class QuickPki {
         return new CertificateBundle(this.issuer, cert, keyPair);
     }
 
-    private String buildSubjectName(SubjectName info) {
-        StringBuilder stringBuilder = new StringBuilder();
-        stringBuilder.append("CN=").append(info.getCommonName());
+    private X500Name buildX500Name(SubjectName info) {
+        X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
+        builder.addRDN(BCStyle.CN, info.getCommonName());
         if(info.getCountry() != null) {
-            stringBuilder.append(", C=").append(info.getCountry());
+            builder.addRDN(BCStyle.C, info.getCountry());
         }
         if(info.getOrganization() != null) {
-            stringBuilder.append(", O=").append(info.getOrganization());
+            builder.addRDN(BCStyle.O, info.getOrganization());
         }
         if(info.getOrganizationUnit() != null) {
-            stringBuilder.append(", OU=").append(info.getOrganizationUnit());
+            builder.addRDN(BCStyle.OU, info.getOrganizationUnit());
         }
         if(info.getDnQualifier() != null) {
-            stringBuilder.append(", DN=").append(info.getDnQualifier());
+            builder.addRDN(BCStyle.DN_QUALIFIER, info.getDnQualifier());
         }
         if(info.getLocality() != null) {
-            stringBuilder.append(", L=").append(info.getLocality());
+            builder.addRDN(BCStyle.L, info.getLocality());
         }
         if(info.getStateOrProvince() != null) {
-            stringBuilder.append(", ST=").append(info.getStateOrProvince());
+            builder.addRDN(BCStyle.ST, info.getStateOrProvince());
         }
-
-        return stringBuilder.toString();
+        return builder.build();
     }
 }
