@@ -1039,12 +1039,13 @@ public class PkiTests {
                 .build());
 
         boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "default leaf must have a KeyUsage extension");
         assertTrue(keyUsage[0], "default RSA leaf must have digitalSignature");
         assertTrue(keyUsage[2], "default RSA leaf must have keyEncipherment");
     }
 
     @Test
-    void multipleKeyUsageBitsCanBeOred() {
+    void multipleKeyUsageBitsCanBeCombined() {
         QuickPki pki = QuickPki.createDefault();
 
         CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
@@ -1055,6 +1056,7 @@ public class PkiTests {
                 .build());
 
         boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "leaf must have a KeyUsage extension");
         assertTrue(keyUsage[0], "digitalSignature");
         assertTrue(keyUsage[1], "nonRepudiation");
         assertTrue(keyUsage[3], "dataEncipherment");
@@ -1067,6 +1069,21 @@ public class PkiTests {
                 () -> CertInfo.builder().keyUsage(null));
         assertThrows(NullPointerException.class,
                 () -> CertInfo.builder().extendedKeyUsage(null));
+    }
+
+    @Test
+    void caOnlyKeyUsageBitsAreRejectedOnLeafCertInfo() {
+        // keyCertSign + BasicConstraints(false) is RFC 5280-invalid and PKIX
+        // validators reject it. CertInfo is leaf metadata; reject CA-only
+        // bits at the builder boundary to fail fast with a clear message
+        // rather than producing a silently-broken cert.
+        IllegalArgumentException certSignEx = assertThrows(IllegalArgumentException.class,
+                () -> CertInfo.builder().keyUsage(KeyUsageBit.KEY_CERT_SIGN));
+        assertTrue(certSignEx.getMessage().contains("CA-only"),
+                "rejection should explain why, got: " + certSignEx.getMessage());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> CertInfo.builder().keyUsage(KeyUsageBit.CRL_SIGN));
     }
 
     @BeforeAll

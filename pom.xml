@@ -102,11 +102,11 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
                 <configuration>
-                    <!-- We deliberately don't write public Javadoc on every
-                         builder method; the bean-style names are
-                         self-documenting. Suppress the noisy 'no comment'
-                         warnings from the standard doclint checks. -->
-                    <doclint>none</doclint>
+                    <!-- Silence the noisy 'no comment' warnings on
+                         self-documenting builder methods, but keep the
+                         other doclint groups (HTML, syntax, references)
+                         active so real Javadoc problems still surface. -->
+                    <doclint>all,-missing</doclint>
                 </configuration>
                 <executions>
                     <execution>

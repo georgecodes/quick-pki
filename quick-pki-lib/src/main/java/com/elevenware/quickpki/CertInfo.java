@@ -147,9 +147,19 @@ public final class CertInfo {
 
         // Add a KeyUsage bit. Calling this any number of times overrides the
         // algorithm-aware default that QuickPki would otherwise pick. Unset
-        // (no calls) means use the default.
+        // (no calls) means use the default. CA-only bits (keyCertSign,
+        // cRLSign) are rejected here: CertInfo describes leaves, and the
+        // resulting cert would have BasicConstraints(false) - which combined
+        // with those bits is RFC 5280-invalid and rejected by PKIX
+        // validators. Intermediates don't go through this path; they get
+        // keyCertSign|cRLSign emitted directly by issueIntermediate.
         public Builder keyUsage(KeyUsageBit bit) {
             Objects.requireNonNull(bit, "keyUsage bit must not be null");
+            if (bit == KeyUsageBit.KEY_CERT_SIGN || bit == KeyUsageBit.CRL_SIGN) {
+                throw new IllegalArgumentException(
+                        bit + " is a CA-only KeyUsage bit; it cannot appear on a leaf "
+                                + "certificate. Use issueIntermediate(...) for CA certs.");
+            }
             if (this.keyUsages == null) {
                 this.keyUsages = EnumSet.noneOf(KeyUsageBit.class);
             }
