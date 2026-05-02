@@ -1,6 +1,10 @@
 # Maven build output
 target/
 
+# Node build output
+node_modules/
+dist/
+
 # IDE
 .idea/
 *.iml

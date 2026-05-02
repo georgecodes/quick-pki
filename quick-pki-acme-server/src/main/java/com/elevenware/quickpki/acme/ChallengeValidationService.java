@@ -12,8 +12,12 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Hashtable;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class ChallengeValidationService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ChallengeValidationService.class);
 
     private final AcmeConfig config;
     private final HttpClient httpClient;
@@ -34,8 +38,12 @@ final class ChallengeValidationService {
             default -> throw new AcmeException(400, "malformed", "Unsupported challenge type");
         };
         if (!valid) {
+            LOG.warn("Challenge validation failed challengeId={} type={} identifier={}",
+                    challenge.id(), challenge.type(), authorization.identifierValue());
             throw new AcmeException(400, "unauthorized", "Challenge validation failed");
         }
+        LOG.info("Challenge validation succeeded challengeId={} type={} identifier={}",
+                challenge.id(), challenge.type(), authorization.identifierValue());
     }
 
     private boolean validateHttp01(String identifier, String token, String keyAuthorization) {
@@ -54,11 +62,13 @@ final class ChallengeValidationService {
                         .GET()
                         .build();
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                LOG.debug("HTTP-01 validation attempt={} uri={} status={}", attempt + 1, uri, response.statusCode());
                 if (response.statusCode() >= 200 && response.statusCode() < 300
                         && keyAuthorization.equals(response.body().trim())) {
                     return true;
                 }
             } catch (Exception ignored) {
+                LOG.debug("HTTP-01 validation attempt failed attempt={} uri={}", attempt + 1, uri, ignored);
                 pauseBeforeRetry();
             }
         }
@@ -71,13 +81,16 @@ final class ChallengeValidationService {
         for (int attempt = 0; attempt < config.challengeAttempts(); attempt++) {
             try {
                 if (txtRecords(name).contains(expected)) {
+                    LOG.debug("DNS-01 TXT validation matched name={}", name);
                     return true;
                 }
                 String cname = firstCname(name);
                 if (cname != null && txtRecords(cname).contains(expected)) {
+                    LOG.debug("DNS-01 CNAME validation matched name={} cname={}", name, cname);
                     return true;
                 }
             } catch (Exception ignored) {
+                LOG.debug("DNS-01 validation attempt failed attempt={} name={}", attempt + 1, name, ignored);
                 pauseBeforeRetry();
             }
         }

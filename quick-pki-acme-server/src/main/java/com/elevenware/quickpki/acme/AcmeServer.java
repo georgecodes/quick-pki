@@ -6,6 +6,8 @@ import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.time.Instant;
@@ -14,15 +16,18 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 final class AcmeServer {
 
+    private static final Logger LOG = LoggerFactory.getLogger(AcmeServer.class);
     private static final TypeReference<List<Map<String, Object>>> LIST_OF_MAPS = new TypeReference<>() {
     };
+    private static final String ADMIN_AUTH_SCHEME = "Bearer ";
 
     private final AcmeConfig config;
     private final AcmeRepository repository;
-    private final CertificateAuthorityService caService;
+    private final AtomicReference<CertificateAuthorityService> caService;
     private final NonceService nonceService;
     private final AcmeJwsService jwsService;
     private final ChallengeValidationService challengeValidationService;
@@ -36,21 +41,27 @@ final class AcmeServer {
             ChallengeValidationService challengeValidationService) {
         this.config = config;
         this.repository = repository;
-        this.caService = caService;
+        this.caService = new AtomicReference<>(caService);
         this.nonceService = nonceService;
         this.jwsService = jwsService;
         this.challengeValidationService = challengeValidationService;
     }
 
     void start() {
+        app().start(config.port());
+    }
+
+    Javalin app() {
         Javalin app = Javalin.create(javalinConfig -> {
             javalinConfig.http.defaultContentType = "application/json";
+            javalinConfig.routes.before(ctx -> ctx.attribute("startedAtNanos", System.nanoTime()));
             routes(javalinConfig.routes);
+            javalinConfig.routes.after(this::logRequest);
             javalinConfig.routes.exception(AcmeException.class, this::handleAcmeException);
             javalinConfig.routes.exception(Exception.class, (e, ctx) -> handleAcmeException(
                     new AcmeException(500, "serverInternal", e.getMessage()), ctx));
         });
-        app.start(config.port());
+        return app;
     }
 
     private void routes(JavalinDefaultRoutingApi routes) {
@@ -67,7 +78,8 @@ final class AcmeServer {
         routes.post("/acme/finalize/{id}", this::finalizeOrder);
         routes.post("/acme/cert/{id}", this::certificate);
         routes.get("/issuer/root.pem", ctx -> ctx.contentType("application/pem-certificate-chain")
-                .result(caService.issuerPem()));
+                .result(caService.get().issuerPem()));
+        routes.post("/admin/ca/rotate", this::rotateCa);
         routes.post("/ocsp", this::ocsp);
         routes.get("/healthz", ctx -> ctx.result("ok"));
     }
@@ -103,6 +115,11 @@ final class AcmeServer {
             boolean termsAgreed = Boolean.TRUE.equals(request.payload().get("termsOfServiceAgreed"));
             account = repository.createAccount(thumbprint, request.jwk().toPublicJWK().toJSONString(), contactJson, termsAgreed);
             created = true;
+            LOG.info("Created ACME account accountId={} thumbprint={} termsAgreed={}",
+                    account.id(), account.keyThumbprint(), termsAgreed);
+        } else {
+            LOG.debug("Returned existing ACME account accountId={} thumbprint={}",
+                    account.id(), account.keyThumbprint());
         }
         addNonce(ctx);
         ctx.header("Location", accountUrl(account.id()));
@@ -116,6 +133,8 @@ final class AcmeServer {
             throw new AcmeException(400, "malformed", "newOrder requires at least one identifier");
         }
         Order order = repository.createOrder(request.account(), identifiers, config);
+        LOG.info("Created ACME order orderId={} accountId={} identifiers={}",
+                order.id(), request.account().id(), identifiers);
         addNonce(ctx);
         ctx.header("Location", orderUrl(order.id()));
         ctx.status(201).json(orderJson(order));
@@ -170,12 +189,17 @@ final class AcmeServer {
             try {
                 challengeValidationService.validate(authorization, challenge, request.account().keyThumbprint());
                 repository.markChallengeValid(challengeId);
+                LOG.info("Marked ACME challenge valid challengeId={} authorizationId={} orderId={}",
+                        challengeId, authorization.id(), authorization.orderId());
             } catch (AcmeException e) {
                 repository.markChallengeInvalid(challengeId, problemJson(e));
+                LOG.warn("Marked ACME challenge invalid challengeId={} authorizationId={} orderId={} type={} detail={}",
+                        challengeId, authorization.id(), authorization.orderId(), e.type(), e.getMessage());
                 throw e;
             }
         }
         addNonce(ctx);
+        ctx.header("Link", "<" + authzUrl(authorization.id()) + ">;rel=\"up\"");
         ctx.json(challengeJson(repository.loadChallenge(challengeId).orElseThrow()));
     }
 
@@ -195,8 +219,10 @@ final class AcmeServer {
                 .filter(a -> "valid".equals(a.status()))
                 .map(Authorization::identifier)
                 .toList();
-        CertificateAuthorityService.IssuedCertificate issued = caService.issue(csrDer, validIdentifiers);
+        CertificateAuthorityService.IssuedCertificate issued = caService.get().issue(csrDer, validIdentifiers);
         repository.finalizeOrder(order.id(), csrDer, issued.certificatePem(), issued.chainPem());
+        LOG.info("Finalized ACME order orderId={} accountId={} identifiers={}",
+                order.id(), request.account().id(), validIdentifiers);
         addNonce(ctx);
         ctx.json(orderJson(loadOrder(order.id().toString())));
     }
@@ -210,7 +236,9 @@ final class AcmeServer {
         if (!"valid".equals(order.status()) || order.chainPem() == null) {
             throw new AcmeException(404, "malformed", "certificate is not available");
         }
+        LOG.info("Served ACME certificate orderId={} accountId={}", order.id(), request.account().id());
         addNonce(ctx);
+        ctx.header("Link", "<" + config.url("/issuer/root.pem") + ">;rel=\"up\"");
         ctx.contentType("application/pem-certificate-chain").result(order.chainPem());
     }
 
@@ -219,6 +247,27 @@ final class AcmeServer {
                 .build(OCSPRespBuilder.UNAUTHORIZED, null)
                 .getEncoded();
         ctx.contentType("application/ocsp-response").result(new ByteArrayInputStream(response));
+    }
+
+    private void rotateCa(Context ctx) {
+        requireAdmin(ctx);
+        CertificateAuthorityService rotated = CertificateAuthorityService.rotate(config, repository);
+        caService.set(rotated);
+        LOG.warn("Rotated active ACME CA issuerName={}", rotated.issuerName());
+        ctx.json(Map.of(
+                "issuerName", rotated.issuerName(),
+                "rotated", true
+        ));
+    }
+
+    private void requireAdmin(Context ctx) {
+        String configuredToken = config.adminToken();
+        String authorization = ctx.header("Authorization");
+        if (configuredToken == null || configuredToken.isBlank()
+                || authorization == null
+                || !authorization.equals(ADMIN_AUTH_SCHEME + configuredToken)) {
+            throw new AcmeException(403, "unauthorized", "admin token is missing or invalid");
+        }
     }
 
     private Map<String, Object> orderJson(Order order) {
@@ -314,10 +363,24 @@ final class AcmeServer {
     }
 
     private void handleAcmeException(AcmeException e, Context ctx) {
+        if (e.status() >= 500) {
+            LOG.error("ACME request failed status={} type={} path={} detail={}",
+                    e.status(), e.type(), ctx.path(), e.getMessage(), e);
+        } else {
+            LOG.warn("ACME request rejected status={} type={} path={} detail={}",
+                    e.status(), e.type(), ctx.path(), e.getMessage());
+        }
         addNonce(ctx);
         ctx.status(e.status())
                 .contentType("application/problem+json")
                 .json(problem(e));
+    }
+
+    private void logRequest(Context ctx) {
+        Long startedAtNanos = ctx.attribute("startedAtNanos");
+        long durationMs = startedAtNanos == null ? -1L : (System.nanoTime() - startedAtNanos) / 1_000_000L;
+        LOG.info("ACME request method={} path={} status={} durationMs={} remote={}",
+                ctx.method(), ctx.path(), ctx.statusCode(), durationMs, ctx.ip());
     }
 
     private String problemJson(AcmeException e) throws Exception {

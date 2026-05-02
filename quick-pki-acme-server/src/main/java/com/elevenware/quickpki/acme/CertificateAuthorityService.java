@@ -17,6 +17,8 @@ import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.StringWriter;
@@ -37,6 +39,8 @@ import java.util.Set;
 
 final class CertificateAuthorityService {
 
+    private static final Logger LOG = LoggerFactory.getLogger(CertificateAuthorityService.class);
+
     private final QuickPki pki;
     private final CertificateBundle issuer;
     private final AcmeConfig config;
@@ -54,6 +58,12 @@ final class CertificateAuthorityService {
         return repository.loadCaMaterial()
                 .map(material -> load(config, issuerInfo, encryptor, material))
                 .orElseGet(() -> create(config, issuerInfo, encryptor, repository));
+    }
+
+    static CertificateAuthorityService rotate(AcmeConfig config, AcmeRepository repository) {
+        Security.addProvider(new BouncyCastleProvider());
+        LOG.warn("Rotating Quick-PKI ACME root CA material");
+        return create(config, issuerInfo(config), new KeyEncryptor(config.caKeyPassword()), repository);
     }
 
     CertificateBundle issuer() {
@@ -121,6 +131,8 @@ final class CertificateAuthorityService {
             PrivateKey privateKey = KeyFactory.getInstance(certificate.getPublicKey().getAlgorithm())
                     .generatePrivate(new PKCS8EncodedKeySpec(privateKeyDer));
             CertificateBundle issuer = new CertificateBundle(null, certificate, new KeyPair(certificate.getPublicKey(), privateKey));
+            LOG.info("Loaded persisted Quick-PKI ACME CA subject={} notAfter={}",
+                    certificate.getSubjectX500Principal().getName(), certificate.getNotAfter().toInstant());
             return new CertificateAuthorityService(QuickPki.fromIssuer(issuerInfo, issuer), config);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to load persisted CA material", e);
@@ -142,6 +154,9 @@ final class CertificateAuthorityService {
                     encrypted.ciphertext(),
                     encrypted.salt(),
                     encrypted.iv()));
+            LOG.info("Created and persisted Quick-PKI ACME CA subject={} notAfter={}",
+                    issuer.getCertificate().getSubjectX500Principal().getName(),
+                    issuer.getCertificate().getNotAfter().toInstant());
         } catch (Exception e) {
             throw new IllegalStateException("Failed to persist new CA material", e);
         }

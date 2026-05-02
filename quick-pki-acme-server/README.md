@@ -12,6 +12,7 @@ Common:
 
 - `PORT`, default `8080`
 - `ACME_EXTERNAL_URL`, default `http://localhost:$PORT`
+- `ACME_ADMIN_TOKEN`, bearer token required by the internal CA rotation endpoint
 - `JDBC_URL`, default `jdbc:postgresql://localhost:5432/quickpki`
 - `JDBC_USER`, default `quickpki`
 - `JDBC_PASSWORD`, default `quickpki`
@@ -29,3 +30,11 @@ The ACME directory is served at:
 ```text
 http://localhost:8080/acme/directory
 ```
+
+The administrator console is served at:
+
+```text
+http://localhost:8090
+```
+
+The local compose profile includes `georgemc/fakeid:0.1.0` on port `8091` for zero-interaction OIDC sign-in.
