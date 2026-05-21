@@ -5,7 +5,10 @@ import com.nimbusds.jose.jwk.JWKSet;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.KeyPurposeId;
 import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
 import org.bouncycastle.cert.X509CertificateHolder;
@@ -13,6 +16,11 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
+import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -1124,6 +1132,175 @@ public class PkiTests {
 
         assertThrows(IllegalArgumentException.class,
                 () -> CertInfo.builder().keyUsage(KeyUsageBit.CRL_SIGN));
+    }
+
+    @Test
+    void canIssueCertificateFromCsr() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair subscriberKeys = generateRsaKeyPair();
+
+        PKCS10CertificationRequest csr = buildCsr(subscriberKeys,
+                "CN=csr.example.com,O=Subscriber Co",
+                List.of("csr.example.com", "alt.example.com"),
+                List.of("10.0.0.1"));
+
+        CertificateBundle bundle = pki.issueCertificate(csr);
+
+        assertEquals(subscriberKeys.getPublic(), bundle.getCertificate().getPublicKey());
+        assertNull(bundle.getKeyPair().getPrivate(),
+                "CSR-issued bundle must not carry a private key");
+        assertTrue(bundle.issuedBy(pki.getIssuer()));
+        assertEquals("csr.example.com", bundle.getCommonName());
+
+        Collection<List<?>> sans = bundle.getCertificate().getSubjectAlternativeNames();
+        assertNotNull(sans);
+        Set<String> sanValues = new HashSet<>();
+        for (List<?> entry : sans) {
+            sanValues.add(entry.get(1).toString());
+        }
+        assertTrue(sanValues.contains("csr.example.com"));
+        assertTrue(sanValues.contains("alt.example.com"));
+        assertTrue(sanValues.contains("10.0.0.1"));
+    }
+
+    @Test
+    void issueFromCsrRejectsInvalidSignature() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair subscriberKeys = generateRsaKeyPair();
+        PKCS10CertificationRequest csr = buildCsr(subscriberKeys,
+                "CN=tampered.example.com", List.of("tampered.example.com"), List.of());
+
+        // Re-decode after flipping a signature byte. PKCS10CertificationRequest
+        // is immutable, so we corrupt the DER and re-parse to get a CSR whose
+        // SubjectPublicKeyInfo no longer matches its signature.
+        byte[] der = csr.getEncoded();
+        der[der.length - 1] ^= 0x01;
+        PKCS10CertificationRequest tampered = new PKCS10CertificationRequest(der);
+
+        QuickPkiException ex = assertThrows(QuickPkiException.class,
+                () -> pki.issueCertificate(tampered));
+        assertTrue(ex.getMessage().toLowerCase().contains("signature"),
+                "exception should mention signature, got: " + ex.getMessage());
+    }
+
+    @Test
+    void issueFromCsrWithOverridesUsesCertInfoNotCsrFields() throws Exception {
+        // ACME-style policy: caller built its own CertInfo (perhaps filtering
+        // SANs from the CSR against a validated set). The lib should sign
+        // exactly what the caller asked for, using the CSR only as the
+        // public-key + proof-of-possession source.
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair subscriberKeys = generateRsaKeyPair();
+        PKCS10CertificationRequest csr = buildCsr(subscriberKeys,
+                "CN=requested.example.com",
+                List.of("requested.example.com", "evil.example.com"),
+                List.of());
+
+        CertInfo overrides = CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("policy.example.com").build())
+                .dnsName("policy.example.com")
+                .build();
+
+        CertificateBundle bundle = pki.issueCertificate(csr, overrides);
+
+        assertEquals(subscriberKeys.getPublic(), bundle.getCertificate().getPublicKey());
+        assertEquals("policy.example.com", bundle.getCommonName());
+
+        Collection<List<?>> sans = bundle.getCertificate().getSubjectAlternativeNames();
+        assertNotNull(sans);
+        Set<String> sanValues = new HashSet<>();
+        for (List<?> entry : sans) {
+            sanValues.add(entry.get(1).toString());
+        }
+        assertEquals(Set.of("policy.example.com"), sanValues,
+                "overrides CertInfo must win over CSR-declared SANs");
+    }
+
+    @Test
+    void issueFromCsrPreservesSanTagForNumericDnsName() throws Exception {
+        // Regression: a CSR dNSName whose string happens to look like an IPv4
+        // literal must stay a DNS SAN on the issued cert. Numeric labels are
+        // valid DNS syntax (RFC 1123), so the tag, not the shape, is the
+        // source of truth.
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair subscriberKeys = generateRsaKeyPair();
+        PKCS10CertificationRequest csr = buildCsr(subscriberKeys,
+                "CN=10.0.0.1",
+                List.of("10.0.0.1"),
+                List.of());
+
+        CertificateBundle bundle = pki.issueCertificate(csr);
+
+        Collection<List<?>> sans = bundle.getCertificate().getSubjectAlternativeNames();
+        assertNotNull(sans);
+        List<List<?>> entries = new ArrayList<>(sans);
+        assertEquals(1, entries.size(), "expected exactly one SAN entry");
+        // GeneralName tag 2 = dNSName, 7 = iPAddress. The CSR carried tag 2;
+        // the issued cert must too.
+        assertEquals(2, ((Number) entries.get(0).get(0)).intValue(),
+                "SAN tag should be dNSName(2), got " + entries.get(0).get(0));
+        assertEquals("10.0.0.1", entries.get(0).get(1));
+    }
+
+    @Test
+    void csrIsIpAddressDoesNotResolveDnsNames() {
+        // Shape-checking before InetAddress.getByName avoids accidental
+        // network lookups on typical DNS names. Anything not made of
+        // digits/dots (v4) or containing a colon (v6) must short-circuit.
+        assertFalse(Csr.isIpAddress("example.com"));
+        assertFalse(Csr.isIpAddress("a-host"));
+        assertTrue(Csr.isIpAddress("10.0.0.1"));
+        assertTrue(Csr.isIpAddress("::1"));
+    }
+
+    @Test
+    void certInfoFromCsrCopiesSubjectAndSans() throws Exception {
+        KeyPair subscriberKeys = generateRsaKeyPair();
+        PKCS10CertificationRequest csr = buildCsr(subscriberKeys,
+                "CN=copy.example.com,O=Copier,OU=Eng",
+                List.of("copy.example.com"),
+                List.of("192.168.1.5"));
+
+        CertInfo info = CertInfo.fromCsr(csr).build();
+
+        assertEquals("copy.example.com", info.getSubjectName().getCommonName());
+        assertEquals("Copier", info.getSubjectName().getOrganization());
+        assertEquals("Eng", info.getSubjectName().getOrganizationUnit());
+        assertEquals(List.of("copy.example.com"), info.getDnsNames());
+        assertEquals(List.of("192.168.1.5"), info.getIpAddresses());
+    }
+
+    private static KeyPair generateRsaKeyPair() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        return generator.generateKeyPair();
+    }
+
+    private static PKCS10CertificationRequest buildCsr(KeyPair keys, String subjectDn,
+                                                       List<String> dnsNames,
+                                                       List<String> ipAddresses) throws Exception {
+        X500Name subject = new X500Name(subjectDn);
+        PKCS10CertificationRequestBuilder builder =
+                new JcaPKCS10CertificationRequestBuilder(subject, keys.getPublic());
+        if (!dnsNames.isEmpty() || !ipAddresses.isEmpty()) {
+            List<GeneralName> names = new ArrayList<>();
+            for (String dns : dnsNames) {
+                names.add(new GeneralName(GeneralName.dNSName, dns));
+            }
+            for (String ip : ipAddresses) {
+                names.add(new GeneralName(GeneralName.iPAddress, ip));
+            }
+            ExtensionsGenerator extGen = new ExtensionsGenerator();
+            extGen.addExtension(Extension.subjectAlternativeName, false,
+                    new GeneralNames(names.toArray(new GeneralName[0])));
+            builder.addAttribute(
+                    org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.pkcs_9_at_extensionRequest,
+                    extGen.generate());
+        }
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA")
+                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                .build(keys.getPrivate());
+        return builder.build(signer);
     }
 
     @BeforeAll

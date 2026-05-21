@@ -2,27 +2,20 @@ package com.elevenware.quickpki.acme;
 
 import com.elevenware.quickpki.CertInfo;
 import com.elevenware.quickpki.CertificateBundle;
+import com.elevenware.quickpki.Csr;
 import com.elevenware.quickpki.ExtendedKeyUsageId;
 import com.elevenware.quickpki.IssuerInfo;
 import com.elevenware.quickpki.QuickPki;
 import com.elevenware.quickpki.SubjectName;
-import org.bouncycastle.asn1.ASN1OctetString;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.Extensions;
-import org.bouncycastle.asn1.x509.GeneralName;
-import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
-import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.StringWriter;
-import java.net.InetAddress;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.PrivateKey;
@@ -30,7 +23,6 @@ import java.security.Security;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
@@ -73,47 +65,60 @@ final class CertificateAuthorityService {
     IssuedCertificate issue(byte[] csrDer, List<Identifier> validatedIdentifiers) {
         try {
             PKCS10CertificationRequest csr = new PKCS10CertificationRequest(csrDer);
-            if (!csr.isSignatureValid(new JcaContentVerifierProviderBuilder()
-                    .setProvider(BouncyCastleProvider.PROVIDER_NAME)
-                    .build(csr.getSubjectPublicKeyInfo()))) {
-                throw new AcmeException(400, "badCSR", "CSR signature is invalid");
+
+            // Filter per-type: a validated "dns:example.com" identifier
+            // authorises a dNSName SAN, not an iPAddress SAN of the same
+            // string. Carrying the tag through avoids issuing a cert whose
+            // SAN type disagrees with what was actually validated.
+            Set<String> allowedDns = identifierValuesOfType(validatedIdentifiers, "dns");
+            Set<String> allowedIp = identifierValuesOfType(validatedIdentifiers, "ip");
+
+            List<String> csrDnsNames = Csr.dnsSubjectAlternativeNames(csr);
+            List<String> csrIpNames = Csr.ipSubjectAlternativeNames(csr);
+
+            if (!csrDnsNames.stream().allMatch(allowedDns::contains)
+                    || !csrIpNames.stream().allMatch(allowedIp::contains)) {
+                throw new AcmeException(400, "badCSR",
+                        "CSR contains subjectAltName entries that were not validated");
             }
 
-            JcaPKCS10CertificationRequest jcaCsr = new JcaPKCS10CertificationRequest(csr)
-                    .setProvider(BouncyCastleProvider.PROVIDER_NAME);
-            List<String> csrNames = csrSubjectAlternativeNames(csr);
-            Set<String> allowed = new HashSet<>(validatedIdentifiers.stream().map(Identifier::value).toList());
-            List<String> names = csrNames.stream()
-                    .filter(allowed::contains)
-                    .distinct()
-                    .toList();
-            if (names.isEmpty()) {
-                throw new AcmeException(400, "badCSR", "CSR must contain at least one validated subjectAltName");
+            List<String> dnsNames = csrDnsNames.stream().distinct().toList();
+            List<String> ipNames = csrIpNames.stream().distinct().toList();
+            if (dnsNames.isEmpty() && ipNames.isEmpty()) {
+                throw new AcmeException(400, "badCSR",
+                        "CSR must contain at least one validated subjectAltName");
             }
-            if (names.size() != csrNames.stream().distinct().count()) {
-                throw new AcmeException(400, "badCSR", "CSR contains subjectAltName entries that were not validated");
-            }
+
+            // CN is just a label - take the first SAN in CSR source order so
+            // it stays stable across re-issuance.
+            String commonName = Csr.subjectAlternativeNames(csr).get(0);
 
             Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
             CertInfo.Builder cert = CertInfo.builder()
-                    .subjectName(SubjectName.builder().commonName(names.get(0)).build())
+                    .subjectName(SubjectName.builder().commonName(commonName).build())
                     .validFrom(now.minus(5, ChronoUnit.MINUTES))
                     .validUntil(now.plus(config.certificateLifetime()))
                     .extendedKeyUsage(ExtendedKeyUsageId.SERVER_AUTH);
-            for (String name : names) {
-                if (isIpAddress(name)) {
-                    cert.ipAddress(name);
-                } else {
-                    cert.dnsName(name);
-                }
+            for (String dns : dnsNames) {
+                cert.dnsName(dns);
             }
-            CertificateBundle bundle = pki.issueCertificate(cert.build(), jcaCsr.getPublicKey());
+            for (String ip : ipNames) {
+                cert.ipAddress(ip);
+            }
+            CertificateBundle bundle = pki.issueCertificate(csr, cert.build());
             return new IssuedCertificate(bundle.toCertificatePem(), bundle.toCertificateChainPem());
         } catch (AcmeException e) {
             throw e;
         } catch (Exception e) {
             throw new AcmeException(400, "badCSR", "Failed to issue certificate from CSR: " + e.getMessage());
         }
+    }
+
+    private static Set<String> identifierValuesOfType(List<Identifier> identifiers, String type) {
+        return identifiers.stream()
+                .filter(id -> type.equalsIgnoreCase(id.type()))
+                .map(Identifier::value)
+                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
     }
 
     private static CertificateAuthorityService load(
@@ -171,42 +176,6 @@ final class CertificateAuthorityService {
                 .validUntil(now.plus(3650, ChronoUnit.DAYS))
                 .defaultLifespan(config.certificateLifetime())
                 .build();
-    }
-
-    private static List<String> csrSubjectAlternativeNames(PKCS10CertificationRequest csr) throws Exception {
-        Extensions extensions = csr.getRequestedExtensions();
-        if (extensions == null) {
-            return List.of();
-        }
-        GeneralNames generalNames = GeneralNames.fromExtensions(extensions, Extension.subjectAlternativeName);
-        if (generalNames == null) {
-            return List.of();
-        }
-        return List.of(generalNames.getNames()).stream()
-                .filter(name -> name.getTagNo() == GeneralName.dNSName || name.getTagNo() == GeneralName.iPAddress)
-                .map(CertificateAuthorityService::generalNameToString)
-                .toList();
-    }
-
-    private static String generalNameToString(GeneralName name) {
-        if (name.getTagNo() == GeneralName.dNSName) {
-            return name.getName().toString();
-        }
-        try {
-            byte[] octets = ASN1OctetString.getInstance(name.getName()).getOctets();
-            return InetAddress.getByAddress(octets).getHostAddress();
-        } catch (Exception e) {
-            throw new AcmeException(400, "badCSR", "CSR contains an invalid IP subjectAltName");
-        }
-    }
-
-    private static boolean isIpAddress(String value) {
-        try {
-            InetAddress.getByName(value);
-            return value.indexOf(':') >= 0 || value.chars().allMatch(c -> Character.isDigit(c) || c == '.');
-        } catch (Exception e) {
-            return false;
-        }
     }
 
     String issuerPem() {

@@ -19,6 +19,7 @@ import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
@@ -331,6 +332,44 @@ public class QuickPki {
         } catch (Exception e) {
             throw new QuickPkiException("Failed to issue certificate", e);
         }
+    }
+
+    /**
+     * Issues a leaf certificate from a PKCS#10 CSR, drawing the subject DN,
+     * SANs, and public key from the CSR. The dNSName / iPAddress tag on each
+     * SAN is preserved from the CSR (a CSR dNSName that happens to look like
+     * an IP literal stays a DNS SAN). The subject DN is copied via
+     * {@link CertInfo#fromCsr(PKCS10CertificationRequest)}, which models the
+     * common RDNs (CN, C, O, OU, dnQualifier, L, ST) - other RDNs in the CSR
+     * are dropped. The CSR's self-signature is verified before anything is
+     * signed; a CSR with a bad signature never produces a cert.
+     * <p>
+     * The returned bundle carries no private key (the subscriber kept it); see
+     * {@link #issueCertificate(CertInfo, PublicKey)} for the caveats around
+     * such bundles.
+     *
+     * @throws QuickPkiException if the CSR signature is invalid or issuance fails
+     */
+    public CertificateBundle issueCertificate(PKCS10CertificationRequest csr) {
+        Objects.requireNonNull(csr, "csr must not be null");
+        return issueCertificate(csr, CertInfo.fromCsr(csr).build());
+    }
+
+    /**
+     * Issues a leaf certificate from a PKCS#10 CSR, but with {@code info}
+     * overriding the CSR's subject/SANs/validity/usages. The CSR contributes
+     * only the public key (and the signature that proves the subscriber
+     * possesses the matching private key). Intended for callers that apply
+     * their own policy on top of CSR contents - eg. ACME servers that
+     * restrict SANs to validated identifiers.
+     *
+     * @throws QuickPkiException if the CSR signature is invalid or issuance fails
+     */
+    public CertificateBundle issueCertificate(PKCS10CertificationRequest csr, CertInfo info) {
+        Objects.requireNonNull(csr, "csr must not be null");
+        Objects.requireNonNull(info, "info must not be null");
+        Csr.verifySignature(csr);
+        return issueCertificate(info, Csr.publicKey(csr));
     }
 
     // Issues a subordinate CA certificate, signed by this PKI, and returns it
