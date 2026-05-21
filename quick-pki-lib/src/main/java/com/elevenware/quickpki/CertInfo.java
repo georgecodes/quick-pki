@@ -1,5 +1,7 @@
 package com.elevenware.quickpki;
 
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -43,6 +45,28 @@ public final class CertInfo {
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    /**
+     * Returns a {@link Builder} pre-populated with the subject DN and SAN
+     * entries (dNSName / iPAddress) from {@code csr}. Validity and key/usage
+     * fields are left at their defaults so the caller can layer their own
+     * policy on top (eg. ACME validators that restrict SANs to validated
+     * identifiers). This factory does not verify the CSR's signature;
+     * {@link QuickPki#issueCertificate(PKCS10CertificationRequest, CertInfo)}
+     * does that at issuance time.
+     */
+    public static Builder fromCsr(PKCS10CertificationRequest csr) {
+        Objects.requireNonNull(csr, "csr must not be null");
+        Builder builder = builder().subjectName(Csr.subjectName(csr));
+        for (String name : Csr.subjectAlternativeNames(csr)) {
+            if (Csr.isIpAddress(name)) {
+                builder.ipAddress(name);
+            } else {
+                builder.dnsName(name);
+            }
+        }
+        return builder;
     }
 
     public SubjectName getSubjectName() {
