@@ -59,12 +59,15 @@ public final class CertInfo {
     public static Builder fromCsr(PKCS10CertificationRequest csr) {
         Objects.requireNonNull(csr, "csr must not be null");
         Builder builder = builder().subjectName(Csr.subjectName(csr));
-        for (String name : Csr.subjectAlternativeNames(csr)) {
-            if (Csr.isIpAddress(name)) {
-                builder.ipAddress(name);
-            } else {
-                builder.dnsName(name);
-            }
+        // Carry the dNSName / iPAddress tag through from the CSR rather than
+        // re-detecting from the string - a CSR dNSName like "10.0.0.1"
+        // (numeric labels are valid DNS) must stay a DNS SAN on the issued
+        // cert.
+        for (String name : Csr.dnsSubjectAlternativeNames(csr)) {
+            builder.dnsName(name);
+        }
+        for (String ip : Csr.ipSubjectAlternativeNames(csr)) {
+            builder.ipAddress(ip);
         }
         return builder;
     }

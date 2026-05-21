@@ -66,31 +66,44 @@ final class CertificateAuthorityService {
         try {
             PKCS10CertificationRequest csr = new PKCS10CertificationRequest(csrDer);
 
-            List<String> csrNames = Csr.subjectAlternativeNames(csr);
-            Set<String> allowed = new HashSet<>(validatedIdentifiers.stream().map(Identifier::value).toList());
-            List<String> names = csrNames.stream()
-                    .filter(allowed::contains)
-                    .distinct()
-                    .toList();
-            if (names.isEmpty()) {
-                throw new AcmeException(400, "badCSR", "CSR must contain at least one validated subjectAltName");
+            // Filter per-type: a validated "dns:example.com" identifier
+            // authorises a dNSName SAN, not an iPAddress SAN of the same
+            // string. Carrying the tag through avoids issuing a cert whose
+            // SAN type disagrees with what was actually validated.
+            Set<String> allowedDns = identifierValuesOfType(validatedIdentifiers, "dns");
+            Set<String> allowedIp = identifierValuesOfType(validatedIdentifiers, "ip");
+
+            List<String> csrDnsNames = Csr.dnsSubjectAlternativeNames(csr);
+            List<String> csrIpNames = Csr.ipSubjectAlternativeNames(csr);
+
+            if (!csrDnsNames.stream().allMatch(allowedDns::contains)
+                    || !csrIpNames.stream().allMatch(allowedIp::contains)) {
+                throw new AcmeException(400, "badCSR",
+                        "CSR contains subjectAltName entries that were not validated");
             }
-            if (names.size() != csrNames.stream().distinct().count()) {
-                throw new AcmeException(400, "badCSR", "CSR contains subjectAltName entries that were not validated");
+
+            List<String> dnsNames = csrDnsNames.stream().distinct().toList();
+            List<String> ipNames = csrIpNames.stream().distinct().toList();
+            if (dnsNames.isEmpty() && ipNames.isEmpty()) {
+                throw new AcmeException(400, "badCSR",
+                        "CSR must contain at least one validated subjectAltName");
             }
+
+            // CN is just a label - take the first SAN in CSR source order so
+            // it stays stable across re-issuance.
+            String commonName = Csr.subjectAlternativeNames(csr).get(0);
 
             Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
             CertInfo.Builder cert = CertInfo.builder()
-                    .subjectName(SubjectName.builder().commonName(names.get(0)).build())
+                    .subjectName(SubjectName.builder().commonName(commonName).build())
                     .validFrom(now.minus(5, ChronoUnit.MINUTES))
                     .validUntil(now.plus(config.certificateLifetime()))
                     .extendedKeyUsage(ExtendedKeyUsageId.SERVER_AUTH);
-            for (String name : names) {
-                if (Csr.isIpAddress(name)) {
-                    cert.ipAddress(name);
-                } else {
-                    cert.dnsName(name);
-                }
+            for (String dns : dnsNames) {
+                cert.dnsName(dns);
+            }
+            for (String ip : ipNames) {
+                cert.ipAddress(ip);
             }
             CertificateBundle bundle = pki.issueCertificate(csr, cert.build());
             return new IssuedCertificate(bundle.toCertificatePem(), bundle.toCertificateChainPem());
@@ -99,6 +112,13 @@ final class CertificateAuthorityService {
         } catch (Exception e) {
             throw new AcmeException(400, "badCSR", "Failed to issue certificate from CSR: " + e.getMessage());
         }
+    }
+
+    private static Set<String> identifierValuesOfType(List<Identifier> identifiers, String type) {
+        return identifiers.stream()
+                .filter(id -> type.equalsIgnoreCase(id.type()))
+                .map(Identifier::value)
+                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
     }
 
     private static CertificateAuthorityService load(

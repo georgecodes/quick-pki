@@ -1217,6 +1217,43 @@ public class PkiTests {
     }
 
     @Test
+    void issueFromCsrPreservesSanTagForNumericDnsName() throws Exception {
+        // Regression: a CSR dNSName whose string happens to look like an IPv4
+        // literal must stay a DNS SAN on the issued cert. Numeric labels are
+        // valid DNS syntax (RFC 1123), so the tag, not the shape, is the
+        // source of truth.
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair subscriberKeys = generateRsaKeyPair();
+        PKCS10CertificationRequest csr = buildCsr(subscriberKeys,
+                "CN=10.0.0.1",
+                List.of("10.0.0.1"),
+                List.of());
+
+        CertificateBundle bundle = pki.issueCertificate(csr);
+
+        Collection<List<?>> sans = bundle.getCertificate().getSubjectAlternativeNames();
+        assertNotNull(sans);
+        List<List<?>> entries = new ArrayList<>(sans);
+        assertEquals(1, entries.size(), "expected exactly one SAN entry");
+        // GeneralName tag 2 = dNSName, 7 = iPAddress. The CSR carried tag 2;
+        // the issued cert must too.
+        assertEquals(2, ((Number) entries.get(0).get(0)).intValue(),
+                "SAN tag should be dNSName(2), got " + entries.get(0).get(0));
+        assertEquals("10.0.0.1", entries.get(0).get(1));
+    }
+
+    @Test
+    void csrIsIpAddressDoesNotResolveDnsNames() {
+        // Shape-checking before InetAddress.getByName avoids accidental
+        // network lookups on typical DNS names. Anything not made of
+        // digits/dots (v4) or containing a colon (v6) must short-circuit.
+        assertFalse(Csr.isIpAddress("example.com"));
+        assertFalse(Csr.isIpAddress("a-host"));
+        assertTrue(Csr.isIpAddress("10.0.0.1"));
+        assertTrue(Csr.isIpAddress("::1"));
+    }
+
+    @Test
     void certInfoFromCsrCopiesSubjectAndSans() throws Exception {
         KeyPair subscriberKeys = generateRsaKeyPair();
         PKCS10CertificationRequest csr = buildCsr(subscriberKeys,

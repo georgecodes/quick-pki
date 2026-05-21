@@ -335,10 +335,14 @@ public class QuickPki {
     }
 
     /**
-     * Issues a leaf certificate from a PKCS#10 CSR, using the CSR's subject DN,
-     * SANs, and public key verbatim. The CSR's self-signature is verified
-     * before anything is signed - a CSR with a bad signature never produces a
-     * cert.
+     * Issues a leaf certificate from a PKCS#10 CSR, drawing the subject DN,
+     * SANs, and public key from the CSR. The dNSName / iPAddress tag on each
+     * SAN is preserved from the CSR (a CSR dNSName that happens to look like
+     * an IP literal stays a DNS SAN). The subject DN is copied via
+     * {@link CertInfo#fromCsr(PKCS10CertificationRequest)}, which models the
+     * common RDNs (CN, C, O, OU, dnQualifier, L, ST) - other RDNs in the CSR
+     * are dropped. The CSR's self-signature is verified before anything is
+     * signed; a CSR with a bad signature never produces a cert.
      * <p>
      * The returned bundle carries no private key (the subscriber kept it); see
      * {@link #issueCertificate(CertInfo, PublicKey)} for the caveats around

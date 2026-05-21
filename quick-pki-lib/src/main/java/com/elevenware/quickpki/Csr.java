@@ -91,9 +91,33 @@ public final class Csr {
     }
 
     /**
-     * Returns the dNSName and iPAddress entries from the CSR's requested
-     * subjectAltName extension. Mixed types in source order; empty list if the
-     * CSR omitted the extension or it contained only other GeneralName types.
+     * Returns the dNSName entries from the CSR's requested subjectAltName
+     * extension, in source order. Empty list if the CSR omitted the extension
+     * or contained no dNSName entries.
+     */
+    public static List<String> dnsSubjectAlternativeNames(PKCS10CertificationRequest csr) {
+        return sansOfTag(csr, GeneralName.dNSName);
+    }
+
+    /**
+     * Returns the iPAddress entries from the CSR's requested subjectAltName
+     * extension, in source order. Each entry is the textual form (dotted-quad
+     * for v4, colon-hex for v6). Empty list if the CSR omitted the extension
+     * or contained no iPAddress entries.
+     */
+    public static List<String> ipSubjectAlternativeNames(PKCS10CertificationRequest csr) {
+        return sansOfTag(csr, GeneralName.iPAddress);
+    }
+
+    /**
+     * Returns dNSName and iPAddress entries from the CSR's requested
+     * subjectAltName extension mixed together as strings, in source order.
+     * The tag is lost - callers that need to round-trip the type (eg. when
+     * building a new SAN extension on the issued cert) must use
+     * {@link #dnsSubjectAlternativeNames(PKCS10CertificationRequest)} and
+     * {@link #ipSubjectAlternativeNames(PKCS10CertificationRequest)}
+     * instead, otherwise a dNSName that happens to look like an IP literal
+     * (numeric labels are valid DNS syntax) will be silently re-typed.
      */
     public static List<String> subjectAlternativeNames(PKCS10CertificationRequest csr) {
         Objects.requireNonNull(csr, "csr must not be null");
@@ -117,22 +141,53 @@ public final class Csr {
     }
 
     /**
-     * Best-effort classification of a SAN string as an IP literal (v4 or v6)
-     * rather than a DNS name. Matches what the SAN extension would emit for
-     * the value.
+     * Returns true if {@code value} is an IP literal (dotted-quad IPv4 or
+     * colon-bearing IPv6). Shape-checks the string before any parser call so a
+     * DNS name never triggers a name-service lookup.
+     * <p>
+     * This is a heuristic on bare strings; callers that already have a CSR in
+     * hand should use {@link #dnsSubjectAlternativeNames} /
+     * {@link #ipSubjectAlternativeNames} to preserve the actual SAN tag
+     * rather than re-classify by shape.
      */
     public static boolean isIpAddress(String value) {
         Objects.requireNonNull(value, "value must not be null");
+        boolean looksLikeV6 = value.indexOf(':') >= 0;
+        boolean looksLikeV4 = !value.isEmpty()
+                && value.chars().allMatch(c -> Character.isDigit(c) || c == '.');
+        if (!looksLikeV4 && !looksLikeV6) {
+            return false;
+        }
         try {
             InetAddress.getByName(value);
+            return true;
         } catch (Exception e) {
             return false;
         }
-        // getByName resolves DNS too; restrict to literal forms (digits/dots
-        // for v4, colon-bearing for v6) so we don't classify "example.com" as
-        // an IP just because it resolves.
-        return value.indexOf(':') >= 0
-                || value.chars().allMatch(c -> Character.isDigit(c) || c == '.');
+    }
+
+    private static List<String> sansOfTag(PKCS10CertificationRequest csr, int tagNo) {
+        Objects.requireNonNull(csr, "csr must not be null");
+        Extensions extensions = csr.getRequestedExtensions();
+        if (extensions == null) {
+            return List.of();
+        }
+        GeneralNames generalNames = GeneralNames.fromExtensions(extensions, Extension.subjectAlternativeName);
+        if (generalNames == null) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (GeneralName name : generalNames.getNames()) {
+            if (name.getTagNo() != tagNo) {
+                continue;
+            }
+            if (tagNo == GeneralName.iPAddress) {
+                result.add(decodeIpAddress(name));
+            } else {
+                result.add(name.getName().toString());
+            }
+        }
+        return List.copyOf(result);
     }
 
     private static String decodeIpAddress(GeneralName name) {
