@@ -19,6 +19,8 @@ jobs:
             dockerfile: quick-pki-acme-server/Dockerfile
           - name: quick-pki-admin
             dockerfile: quick-pki-admin/Dockerfile
+          - name: quick-pki-certapi
+            dockerfile: quick-pki-cert-api/Dockerfile
     steps:
       - name: Checkout project sources
         uses: actions/checkout@v4
