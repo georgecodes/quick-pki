@@ -1,5 +1,6 @@
 package com.elevenware.quickpki.acme;
 
+import com.elevenware.quickpki.CertificateProfile;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
@@ -47,17 +48,19 @@ final class RemoteCertificateIssuer implements CertificateIssuer {
     private final String basicAuth;
     private final Duration timeout;
     private final HttpClient http;
+    private final CertificateProfile profile;
 
     private String cachedToken;
     private Instant tokenExpiresAt = Instant.EPOCH;
     private String cachedIssuerPem;
 
-    private RemoteCertificateIssuer(AcmeConfig.RemoteIssuerConfig config) {
+    private RemoteCertificateIssuer(AcmeConfig.RemoteIssuerConfig config, CertificateProfile profile) {
         this.certificatesEndpoint = URI.create(config.apiUrl() + "/v1/certificates");
         this.issuerEndpoint = URI.create(config.apiUrl() + "/issuer/root.pem");
         this.tokenEndpoint = URI.create(config.tokenUrl());
         this.scope = config.scope();
         this.timeout = config.timeout();
+        this.profile = profile;
         this.basicAuth = "Basic " + Base64.getEncoder().encodeToString(
                 (config.clientId() + ":" + config.clientSecret()).getBytes(StandardCharsets.UTF_8));
         this.http = HttpClient.newBuilder()
@@ -65,14 +68,15 @@ final class RemoteCertificateIssuer implements CertificateIssuer {
                 .build();
     }
 
-    static RemoteCertificateIssuer fromConfig(AcmeConfig.RemoteIssuerConfig config) {
+    static RemoteCertificateIssuer fromConfig(AcmeConfig.RemoteIssuerConfig config,
+                                              CertificateProfile profile) {
         // CSR parsing in CsrValidation relies on BouncyCastle; the local CA
         // registers it, but in remote mode that code path never runs.
         Security.addProvider(new BouncyCastleProvider());
-        LOG.info("ACME issuance delegated to remote certificate API url={} tokenUrl={} clientId={} scope={}",
+        LOG.info("ACME issuance delegated to remote certificate API url={} tokenUrl={} clientId={} scope={} profile={}",
                 config.apiUrl(), config.tokenUrl(), config.clientId(),
-                config.scope() == null ? "(none)" : config.scope());
-        return new RemoteCertificateIssuer(config);
+                config.scope() == null ? "(none)" : config.scope(), profile);
+        return new RemoteCertificateIssuer(config, profile);
     }
 
     @Override
@@ -84,7 +88,8 @@ final class RemoteCertificateIssuer implements CertificateIssuer {
         String body;
         try {
             body = Json.MAPPER.writeValueAsString(Map.of(
-                    "csr", Base64.getEncoder().encodeToString(csrDer)));
+                    "csr", Base64.getEncoder().encodeToString(csrDer),
+                    "profile", profile.name()));
         } catch (Exception e) {
             throw upstream("the certificate request could not be encoded");
         }

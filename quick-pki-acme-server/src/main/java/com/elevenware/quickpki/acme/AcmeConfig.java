@@ -1,5 +1,7 @@
 package com.elevenware.quickpki.acme;
 
+import com.elevenware.quickpki.CertificateProfile;
+
 import java.net.URI;
 import java.time.Duration;
 import java.util.Arrays;
@@ -18,7 +20,8 @@ record AcmeConfig(
         Duration challengeTimeout,
         int challengeAttempts,
         List<String> dnsServers,
-        RemoteIssuerConfig remoteIssuer
+        RemoteIssuerConfig remoteIssuer,
+        CertificateProfile certificateProfile
 ) {
 
     /**
@@ -68,7 +71,10 @@ record AcmeConfig(
                 Duration.ofSeconds(intEnv("ACME_CHALLENGE_TIMEOUT_SECONDS", 5)),
                 intEnv("ACME_CHALLENGE_ATTEMPTS", 3),
                 csvEnv("ACME_DNS_SERVERS"),
-                remoteIssuer
+                remoteIssuer,
+                // Defaults to TLS_SERVER: ACME issues domain-validated TLS
+                // server certificates, so serverAuth is the right shape.
+                CertificateProfile.fromName(env("ACME_CERTIFICATE_PROFILE", "TLS_SERVER"))
         );
     }
 

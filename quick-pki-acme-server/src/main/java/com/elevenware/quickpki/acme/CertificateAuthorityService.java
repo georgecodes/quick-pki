@@ -2,7 +2,6 @@ package com.elevenware.quickpki.acme;
 
 import com.elevenware.quickpki.CertInfo;
 import com.elevenware.quickpki.CertificateBundle;
-import com.elevenware.quickpki.ExtendedKeyUsageId;
 import com.elevenware.quickpki.IssuerInfo;
 import com.elevenware.quickpki.QuickPki;
 import com.elevenware.quickpki.SubjectName;
@@ -68,7 +67,7 @@ final class CertificateAuthorityService implements CertificateIssuer {
                     .subjectName(SubjectName.builder().commonName(validated.commonName()).build())
                     .validFrom(now.minus(5, ChronoUnit.MINUTES))
                     .validUntil(now.plus(config.certificateLifetime()))
-                    .extendedKeyUsage(ExtendedKeyUsageId.SERVER_AUTH);
+                    .profile(config.certificateProfile());
             for (String dns : validated.dnsNames()) {
                 cert.dnsName(dns);
             }

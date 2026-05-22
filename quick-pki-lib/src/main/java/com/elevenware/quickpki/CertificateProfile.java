@@ -1,8 +1,10 @@
 package com.elevenware.quickpki;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * A named bundle of leaf-certificate policy - the KeyUsage and ExtendedKeyUsage
@@ -60,6 +62,29 @@ public enum CertificateProfile {
                 : Collections.unmodifiableSet(EnumSet.copyOf(keyUsages));
         this.extendedKeyUsages = extendedKeyUsages == null ? null
                 : Collections.unmodifiableSet(EnumSet.copyOf(extendedKeyUsages));
+    }
+
+    /**
+     * Resolves a profile from its name, case-insensitively. A {@code null} or
+     * blank name resolves to {@link #DEFAULT} so callers can treat "no profile
+     * supplied" and "DEFAULT profile" identically.
+     *
+     * @throws IllegalArgumentException if {@code name} matches no profile
+     */
+    public static CertificateProfile fromName(String name) {
+        if (name == null || name.isBlank()) {
+            return DEFAULT;
+        }
+        String trimmed = name.trim();
+        for (CertificateProfile profile : values()) {
+            if (profile.name().equalsIgnoreCase(trimmed)) {
+                return profile;
+            }
+        }
+        throw new IllegalArgumentException("Unknown certificate profile '" + name
+                + "'; valid profiles are " + Arrays.stream(values())
+                        .map(Enum::name)
+                        .collect(Collectors.joining(", ")));
     }
 
     /**
