@@ -1,8 +1,19 @@
 package com.elevenware.quickpki.acme;
 
+import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.ExtensionsGenerator;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.h2.jdbcx.JdbcDataSource;
 
 import javax.sql.DataSource;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -12,6 +23,21 @@ import java.util.UUID;
 final class AcmeTestSupport {
 
     private AcmeTestSupport() {
+    }
+
+    /** Builds a signed PKCS#10 request carrying a single dNSName SAN, in DER form. */
+    static byte[] csrWithDnsSan(String dnsName) throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+        JcaPKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(
+                new X500Name("CN=" + dnsName), keyPair.getPublic());
+        ExtensionsGenerator extensions = new ExtensionsGenerator();
+        extensions.addExtension(Extension.subjectAlternativeName, false,
+                new GeneralNames(new GeneralName(GeneralName.dNSName, dnsName)));
+        builder.addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions.generate());
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
+        return builder.build(signer).getEncoded();
     }
 
     static AcmeConfig config() {
@@ -27,7 +53,8 @@ final class AcmeTestSupport {
                 Duration.ofHours(1),
                 Duration.ofMillis(10),
                 1,
-                java.util.List.of());
+                java.util.List.of(),
+                null);
     }
 
     static DataSource dataSource() throws SQLException {

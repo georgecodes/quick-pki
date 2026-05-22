@@ -2,7 +2,6 @@ package com.elevenware.quickpki.acme;
 
 import com.elevenware.quickpki.CertInfo;
 import com.elevenware.quickpki.CertificateBundle;
-import com.elevenware.quickpki.Csr;
 import com.elevenware.quickpki.ExtendedKeyUsageId;
 import com.elevenware.quickpki.IssuerInfo;
 import com.elevenware.quickpki.QuickPki;
@@ -10,7 +9,6 @@ import com.elevenware.quickpki.SubjectName;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
-import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,11 +23,9 @@ import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
-final class CertificateAuthorityService {
+final class CertificateAuthorityService implements CertificateIssuer {
 
     private static final Logger LOG = LoggerFactory.getLogger(CertificateAuthorityService.class);
 
@@ -62,63 +58,30 @@ final class CertificateAuthorityService {
         return issuer;
     }
 
-    IssuedCertificate issue(byte[] csrDer, List<Identifier> validatedIdentifiers) {
+    @Override
+    public IssuedCertificate issue(byte[] csrDer, List<Identifier> validatedIdentifiers) {
         try {
-            PKCS10CertificationRequest csr = new PKCS10CertificationRequest(csrDer);
-
-            // Filter per-type: a validated "dns:example.com" identifier
-            // authorises a dNSName SAN, not an iPAddress SAN of the same
-            // string. Carrying the tag through avoids issuing a cert whose
-            // SAN type disagrees with what was actually validated.
-            Set<String> allowedDns = identifierValuesOfType(validatedIdentifiers, "dns");
-            Set<String> allowedIp = identifierValuesOfType(validatedIdentifiers, "ip");
-
-            List<String> csrDnsNames = Csr.dnsSubjectAlternativeNames(csr);
-            List<String> csrIpNames = Csr.ipSubjectAlternativeNames(csr);
-
-            if (!csrDnsNames.stream().allMatch(allowedDns::contains)
-                    || !csrIpNames.stream().allMatch(allowedIp::contains)) {
-                throw new AcmeException(400, "badCSR",
-                        "CSR contains subjectAltName entries that were not validated");
-            }
-
-            List<String> dnsNames = csrDnsNames.stream().distinct().toList();
-            List<String> ipNames = csrIpNames.stream().distinct().toList();
-            if (dnsNames.isEmpty() && ipNames.isEmpty()) {
-                throw new AcmeException(400, "badCSR",
-                        "CSR must contain at least one validated subjectAltName");
-            }
-
-            // CN is just a label - take the first SAN in CSR source order so
-            // it stays stable across re-issuance.
-            String commonName = Csr.subjectAlternativeNames(csr).get(0);
+            CsrValidation.ValidatedCsr validated = CsrValidation.validate(csrDer, validatedIdentifiers);
 
             Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
             CertInfo.Builder cert = CertInfo.builder()
-                    .subjectName(SubjectName.builder().commonName(commonName).build())
+                    .subjectName(SubjectName.builder().commonName(validated.commonName()).build())
                     .validFrom(now.minus(5, ChronoUnit.MINUTES))
                     .validUntil(now.plus(config.certificateLifetime()))
                     .extendedKeyUsage(ExtendedKeyUsageId.SERVER_AUTH);
-            for (String dns : dnsNames) {
+            for (String dns : validated.dnsNames()) {
                 cert.dnsName(dns);
             }
-            for (String ip : ipNames) {
+            for (String ip : validated.ipNames()) {
                 cert.ipAddress(ip);
             }
-            CertificateBundle bundle = pki.issueCertificate(csr, cert.build());
+            CertificateBundle bundle = pki.issueCertificate(validated.csr(), cert.build());
             return new IssuedCertificate(bundle.toCertificatePem(), bundle.toCertificateChainPem());
         } catch (AcmeException e) {
             throw e;
         } catch (Exception e) {
             throw new AcmeException(400, "badCSR", "Failed to issue certificate from CSR: " + e.getMessage());
         }
-    }
-
-    private static Set<String> identifierValuesOfType(List<Identifier> identifiers, String type) {
-        return identifiers.stream()
-                .filter(id -> type.equalsIgnoreCase(id.type()))
-                .map(Identifier::value)
-                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
     }
 
     private static CertificateAuthorityService load(
@@ -178,7 +141,8 @@ final class CertificateAuthorityService {
                 .build();
     }
 
-    String issuerPem() {
+    @Override
+    public String issuerPem() {
         return issuer.toCertificatePem();
     }
 
@@ -198,8 +162,5 @@ final class CertificateAuthorityService {
             throw new IllegalStateException("Failed to encode PEM", e);
         }
         return sw.toString();
-    }
-
-    record IssuedCertificate(String certificatePem, String chainPem) {
     }
 }

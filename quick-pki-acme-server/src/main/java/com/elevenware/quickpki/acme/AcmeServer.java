@@ -27,7 +27,7 @@ final class AcmeServer {
 
     private final AcmeConfig config;
     private final AcmeRepository repository;
-    private final AtomicReference<CertificateAuthorityService> caService;
+    private final AtomicReference<CertificateIssuer> certificateIssuer;
     private final NonceService nonceService;
     private final AcmeJwsService jwsService;
     private final ChallengeValidationService challengeValidationService;
@@ -35,13 +35,13 @@ final class AcmeServer {
     AcmeServer(
             AcmeConfig config,
             AcmeRepository repository,
-            CertificateAuthorityService caService,
+            CertificateIssuer certificateIssuer,
             NonceService nonceService,
             AcmeJwsService jwsService,
             ChallengeValidationService challengeValidationService) {
         this.config = config;
         this.repository = repository;
-        this.caService = new AtomicReference<>(caService);
+        this.certificateIssuer = new AtomicReference<>(certificateIssuer);
         this.nonceService = nonceService;
         this.jwsService = jwsService;
         this.challengeValidationService = challengeValidationService;
@@ -85,7 +85,7 @@ final class AcmeServer {
         routes.post("/acme/finalize/{id}", this::finalizeOrder);
         routes.post("/acme/cert/{id}", this::certificate);
         routes.get("/issuer/root.pem", ctx -> ctx.contentType("application/pem-certificate-chain")
-                .result(caService.get().issuerPem()));
+                .result(certificateIssuer.get().issuerPem()));
         routes.post("/admin/ca/rotate", this::rotateCa);
         routes.post("/ocsp", this::ocsp);
         routes.get("/healthz", ctx -> ctx.result("ok"));
@@ -226,7 +226,7 @@ final class AcmeServer {
                 .filter(a -> "valid".equals(a.status()))
                 .map(Authorization::identifier)
                 .toList();
-        CertificateAuthorityService.IssuedCertificate issued = caService.get().issue(csrDer, validIdentifiers);
+        CertificateIssuer.IssuedCertificate issued = certificateIssuer.get().issue(csrDer, validIdentifiers);
         repository.finalizeOrder(order.id(), csrDer, issued.certificatePem(), issued.chainPem());
         LOG.info("Finalized ACME order orderId={} accountId={} identifiers={}",
                 order.id(), request.account().id(), validIdentifiers);
@@ -258,8 +258,12 @@ final class AcmeServer {
 
     private void rotateCa(Context ctx) {
         requireAdmin(ctx);
+        if (config.remoteIssuer() != null) {
+            throw new AcmeException(409, "rotationUnsupported",
+                    "CA rotation is unavailable: this server delegates issuance to a remote certificate API");
+        }
         CertificateAuthorityService rotated = CertificateAuthorityService.rotate(config, repository);
-        caService.set(rotated);
+        certificateIssuer.set(rotated);
         LOG.warn("Rotated active ACME CA issuerName={}", rotated.issuerName());
         ctx.json(Map.of(
                 "issuerName", rotated.issuerName(),

@@ -12,18 +12,21 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         AcmeConfig config = AcmeConfig.fromEnv();
-        LOG.info("Starting Quick-PKI ACME server port={} externalUrl={} databaseUrl={} dnsServers={} certificateDays={} authzHours={}",
+        LOG.info("Starting Quick-PKI ACME server port={} externalUrl={} databaseUrl={} dnsServers={} certificateDays={} authzHours={} issuance={}",
                 config.port(),
                 config.externalUrl(),
                 config.databaseUrl(),
                 config.dnsServers(),
                 config.certificateLifetime().toDays(),
-                config.authzLifetime().toHours());
+                config.authzLifetime().toHours(),
+                config.remoteIssuer() == null ? "local-ca" : "remote-api");
         Database database = Database.open(config);
         database.migrate();
 
         AcmeRepository repository = new AcmeRepository(database.dataSource());
-        CertificateAuthorityService caService = CertificateAuthorityService.loadOrCreate(config, repository);
+        CertificateIssuer certificateIssuer = config.remoteIssuer() != null
+                ? RemoteCertificateIssuer.fromConfig(config.remoteIssuer())
+                : CertificateAuthorityService.loadOrCreate(config, repository);
         NonceService nonceService = new NonceService();
         AcmeJwsService jwsService = new AcmeJwsService(repository, nonceService);
         ChallengeValidationService challengeValidationService = new ChallengeValidationService(config);
@@ -31,7 +34,7 @@ public final class Main {
         AcmeServer server = new AcmeServer(
                 config,
                 repository,
-                caService,
+                certificateIssuer,
                 nonceService,
                 jwsService,
                 challengeValidationService
