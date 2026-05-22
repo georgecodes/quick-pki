@@ -117,17 +117,49 @@ paths:
   /healthz:
     get:
       tags: [Public]
-      summary: Liveness/readiness probe
-      operationId: healthCheck
+      summary: Liveness probe
+      description: >
+        Confirms the process is up and serving HTTP. Touches no dependencies,
+        so it is not affected by a database outage.
+      operationId: liveness
       security: []
       responses:
         '200':
-          description: The service is up
+          description: The process is alive
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-                example: ok
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: alive
+
+  /readyz:
+    get:
+      tags: [Public]
+      summary: Readiness probe
+      description: >
+        Confirms the service can serve requests by checking that its database
+        is reachable.
+      operationId: readiness
+      security: []
+      responses:
+        '200':
+          description: The service is ready to serve traffic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: ready
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: unavailable
+                detail: database unreachable
 
 components:
   securitySchemes:
@@ -141,6 +173,21 @@ components:
         trust.
 
   schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: >
+            The probe outcome: `alive` and `ready` accompany a 200; `unavailable`
+            accompanies a 503.
+          enum: [alive, ready, unavailable]
+        detail:
+          type: string
+          description: Human-readable explanation, present when a probe fails.
+          example: database unreachable
+
     CertificateRequest:
       type: object
       required: [csr]
