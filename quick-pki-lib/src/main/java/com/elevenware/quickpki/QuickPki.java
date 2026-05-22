@@ -1,5 +1,6 @@
 package com.elevenware.quickpki;
 
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
@@ -45,6 +46,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * A very small library for generating certs for tests. It isn't in any way a viable PKI
@@ -132,15 +134,19 @@ public class QuickPki {
         return serial;
     }
 
-    // If the caller specified explicit KeyUsage bits on the CertInfo, OR them
-    // together. Otherwise default by key algorithm: RSA gets
-    // digitalSignature|keyEncipherment; EC gets digitalSignature|keyAgreement
-    // because keyEncipherment is RSA key-transport semantics and some strict
-    // validators reject it on EC certs.
+    // Resolves the leaf KeyUsage. Precedence: explicit CertInfo bits win;
+    // otherwise the selected profile's bits; otherwise default by key
+    // algorithm - RSA gets digitalSignature|keyEncipherment, EC gets
+    // digitalSignature|keyAgreement because keyEncipherment is RSA
+    // key-transport semantics and some strict validators reject it on EC.
     private KeyUsage leafKeyUsageFor(PublicKey publicKey, CertInfo info) {
-        if (info.getKeyUsages() != null) {
+        Set<KeyUsageBit> usages = info.getKeyUsages();
+        if (usages == null) {
+            usages = info.getProfile().keyUsages();
+        }
+        if (usages != null) {
             int bits = 0;
-            for (KeyUsageBit b : info.getKeyUsages()) {
+            for (KeyUsageBit b : usages) {
                 bits |= b.bit();
             }
             return new KeyUsage(bits);
@@ -152,12 +158,21 @@ public class QuickPki {
         return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment);
     }
 
-    // If the caller specified explicit ExtendedKeyUsage purposes, use those
-    // verbatim. Otherwise default to serverAuth + clientAuth, the right shape
-    // for both server and client TLS scenarios.
+    // Resolves the leaf ExtendedKeyUsage. Precedence: explicit CertInfo
+    // purposes win; otherwise the selected profile's purposes; otherwise
+    // default to serverAuth + clientAuth. Returns null when no EKU extension
+    // should be emitted at all - the profile can request this with an empty
+    // purpose set (eg. CertificateProfile.BRSEAL).
     private ExtendedKeyUsage leafEkuFor(CertInfo info) {
-        if (info.getExtendedKeyUsages() != null) {
-            KeyPurposeId[] purposes = info.getExtendedKeyUsages().stream()
+        Set<ExtendedKeyUsageId> eku = info.getExtendedKeyUsages();
+        if (eku == null) {
+            eku = info.getProfile().extendedKeyUsages();
+        }
+        if (eku != null) {
+            if (eku.isEmpty()) {
+                return null;
+            }
+            KeyPurposeId[] purposes = eku.stream()
                     .map(ExtendedKeyUsageId::keyPurposeId)
                     .toArray(KeyPurposeId[]::new);
             return new ExtendedKeyUsage(purposes);
@@ -449,7 +464,10 @@ public class QuickPki {
         JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
         certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
         certificateBuilder.addExtension(Extension.keyUsage, true, leafKeyUsageFor(publicKey, info));
-        certificateBuilder.addExtension(Extension.extendedKeyUsage, false, leafEkuFor(info));
+        ExtendedKeyUsage eku = leafEkuFor(info);
+        if (eku != null) {
+            certificateBuilder.addExtension(Extension.extendedKeyUsage, false, eku);
+        }
         certificateBuilder.addExtension(Extension.subjectKeyIdentifier, false,
                 extUtils.createSubjectKeyIdentifier(publicKey));
         certificateBuilder.addExtension(Extension.authorityKeyIdentifier, false,
@@ -500,6 +518,26 @@ public class QuickPki {
         if(info.getStateOrProvince() != null) {
             builder.addRDN(BCStyle.ST, info.getStateOrProvince());
         }
+        if(info.getOrganizationIdentifier() != null) {
+            builder.addRDN(BCStyle.ORGANIZATION_IDENTIFIER, info.getOrganizationIdentifier());
+        }
+        if(info.getBusinessCategory() != null) {
+            builder.addRDN(BCStyle.BUSINESS_CATEGORY, info.getBusinessCategory());
+        }
+        if(info.getJurisdictionCountry() != null) {
+            builder.addRDN(JURISDICTION_COUNTRY_NAME, info.getJurisdictionCountry());
+        }
+        if(info.getSerialNumber() != null) {
+            builder.addRDN(BCStyle.SERIALNUMBER, info.getSerialNumber());
+        }
+        if(info.getUserId() != null) {
+            builder.addRDN(BCStyle.UID, info.getUserId());
+        }
         return builder.build();
     }
+
+    // jurisdictionCountryName, the EV-style jurisdiction-of-incorporation
+    // country. BCStyle has no constant for it, so we name the OID directly.
+    private static final ASN1ObjectIdentifier JURISDICTION_COUNTRY_NAME =
+            new ASN1ObjectIdentifier("1.3.6.1.4.1.311.60.2.1.3");
 }
