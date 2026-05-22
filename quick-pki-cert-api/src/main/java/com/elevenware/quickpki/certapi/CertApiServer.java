@@ -7,11 +7,14 @@ import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -30,21 +33,29 @@ final class CertApiServer {
 
     private static final Logger LOG = LoggerFactory.getLogger(CertApiServer.class);
 
+    // Bound on how long the readiness probe waits to validate a pooled
+    // connection: short enough that a stalled database fails the probe
+    // promptly rather than letting Kubernetes' own probe timeout fire.
+    private static final int READINESS_TIMEOUT_SECONDS = 2;
+
     private final CertApiConfig config;
     private final CertApiRepository repository;
     private final CertificateAuthorityService caService;
     private final TokenIntrospector introspector;
+    private final DataSource dataSource;
     private final String openApiSpec;
 
     CertApiServer(
             CertApiConfig config,
             CertApiRepository repository,
             CertificateAuthorityService caService,
-            TokenIntrospector introspector) {
+            TokenIntrospector introspector,
+            DataSource dataSource) {
         this.config = config;
         this.repository = repository;
         this.caService = caService;
         this.introspector = introspector;
+        this.dataSource = dataSource;
         // The static spec uses a placeholder server URL so the served copy
         // reflects however this instance is actually reached.
         this.openApiSpec = loadResource("/openapi.yaml")
@@ -77,9 +88,33 @@ final class CertApiServer {
         routes.get("/v1/certificates/{id}", this::getCertificate);
         routes.get("/issuer/root.pem", ctx -> ctx.contentType("application/pem-certificate-chain")
                 .result(caService.issuerPem()));
-        routes.get("/healthz", ctx -> ctx.result("ok"));
+        routes.get("/healthz", this::liveness);
+        routes.get("/readyz", this::readiness);
         routes.get("/openapi.yaml", ctx -> ctx.contentType("application/yaml").result(openApiSpec));
         routes.get("/docs", ctx -> ctx.contentType("text/html").result(DOCS_PAGE));
+    }
+
+    // Liveness probe: confirms only that the process is up and can serve HTTP.
+    // It deliberately touches no dependencies, so a transient database outage
+    // sheds traffic via the readiness probe instead of restarting every pod.
+    private void liveness(Context ctx) {
+        ctx.json(Map.of("status", "alive"));
+    }
+
+    // Readiness probe: confirms the service can actually do work, which means
+    // its database is reachable. A failure here removes the pod from the
+    // Service's endpoints until the dependency recovers — no restart.
+    private void readiness(Context ctx) {
+        try (Connection connection = dataSource.getConnection()) {
+            if (connection.isValid(READINESS_TIMEOUT_SECONDS)) {
+                ctx.json(Map.of("status", "ready"));
+                return;
+            }
+            LOG.warn("Readiness check failed: database connection is not valid");
+        } catch (SQLException e) {
+            LOG.warn("Readiness check failed: database is unreachable", e);
+        }
+        ctx.status(503).json(Map.of("status", "unavailable", "detail", "database unreachable"));
     }
 
     // A self-contained API reference page; pulls Redoc from a CDN and renders
@@ -235,6 +270,12 @@ final class CertApiServer {
     }
 
     private void logRequest(Context ctx) {
+        // Kubernetes polls the probes every few seconds; logging each hit
+        // would bury genuine request traffic, so leave them out.
+        String path = ctx.path();
+        if (path.equals("/healthz") || path.equals("/readyz")) {
+            return;
+        }
         Long startedAtNanos = ctx.attribute("startedAtNanos");
         long durationMs = startedAtNanos == null ? -1L : (System.nanoTime() - startedAtNanos) / 1_000_000L;
         LOG.info("request method={} path={} status={} durationMs={} remote={}",

@@ -47,14 +47,35 @@ spec:
                 name: quick-pki-cert-api
             - secretRef:
                 name: quick-pki-cert-api
-          readinessProbe:
+          # Startup: covers the slow first boot (Liquibase migration and, on a
+          # fresh database, issuing CA generation). Gives up to 60s before the
+          # liveness probe takes over, so a slow start is never mistaken for a
+          # hung process.
+          startupProbe:
             httpGet:
               path: /healthz
               port: 8080
+            periodSeconds: 5
+            failureThreshold: 12
+          # Liveness: is the process still up? Dependency-free, so a database
+          # outage never restarts the pod.
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Readiness: can the pod serve traffic? Checks database reachability,
+          # so a pod with a broken database is removed from the Service's
+          # endpoints until it recovers — without a restart.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service

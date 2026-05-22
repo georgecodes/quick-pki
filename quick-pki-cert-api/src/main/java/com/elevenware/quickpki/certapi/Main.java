@@ -27,7 +27,8 @@ public final class Main {
         CertificateAuthorityService caService = CertificateAuthorityService.loadOrCreate(config, repository);
         TokenIntrospector introspector = TokenIntrospector.fromConfig(config);
 
-        CertApiServer server = new CertApiServer(config, repository, caService, introspector);
+        CertApiServer server = new CertApiServer(
+                config, repository, caService, introspector, database.dataSource());
         server.start();
     }
 }

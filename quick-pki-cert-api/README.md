@@ -42,9 +42,25 @@ Common:
 | POST   | `/v1/certificates`       | Bearer      | Issue a certificate from a CSR       |
 | GET    | `/v1/certificates/{id}`  | Bearer      | Fetch a previously issued cert       |
 | GET    | `/issuer/root.pem`       | none        | Download the issuing CA certificate  |
-| GET    | `/healthz`               | none        | Liveness/readiness probe             |
+| GET    | `/healthz`               | none        | Liveness probe — process is up       |
+| GET    | `/readyz`                | none        | Readiness probe — database reachable |
 | GET    | `/openapi.yaml`          | none        | OpenAPI 3.0 description of this API   |
 | GET    | `/docs`                  | none        | Browsable API reference (Redoc)      |
+
+## Health checks
+
+Two unauthenticated endpoints support Kubernetes probes, both returning a JSON
+`{"status": ...}` body:
+
+- `GET /healthz` — liveness. Confirms only that the process is up and serving
+  HTTP. It touches no dependencies, so a database outage never restarts pods.
+- `GET /readyz` — readiness. Confirms the service can do work by validating a
+  pooled database connection. Returns `200` when the database is reachable and
+  `503` otherwise, so an affected pod is pulled from the Service's endpoints
+  until it recovers — without a restart.
+
+The manifests in `k8s/` wire `/healthz` to both the startup and liveness
+probes and `/readyz` to the readiness probe.
 
 ## API documentation
 

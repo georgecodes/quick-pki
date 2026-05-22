@@ -7,13 +7,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
+import java.io.PrintWriter;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Base64;
 import java.util.Map;
+import java.util.logging.Logger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -149,6 +153,41 @@ class CertApiServerTest {
     }
 
     @Test
+    void reportsLivenessWithoutAuthentication() throws Exception {
+        start(null);
+
+        HttpResponse<String> response = get("/healthz", null);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(Json.MAPPER.readTree(response.body()).get("status").asText()).isEqualTo("alive");
+    }
+
+    @Test
+    void reportsReadinessWhenTheDatabaseIsReachable() throws Exception {
+        start(null);
+
+        HttpResponse<String> response = get("/readyz", null);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(Json.MAPPER.readTree(response.body()).get("status").asText()).isEqualTo("ready");
+    }
+
+    @Test
+    void reportsNotReadyWhenTheDatabaseIsUnreachable() throws Exception {
+        // The service starts against a healthy database, then loses it: the
+        // liveness probe stays green while readiness flips to 503.
+        ToggleableDataSource dataSource = new ToggleableDataSource(CertApiTestSupport.dataSource());
+        start(null, dataSource);
+        dataSource.fail();
+
+        HttpResponse<String> readiness = get("/readyz", null);
+        assertThat(readiness.statusCode()).isEqualTo(503);
+        assertThat(Json.MAPPER.readTree(readiness.body()).get("status").asText()).isEqualTo("unavailable");
+
+        assertThat(get("/healthz", null).statusCode()).isEqualTo(200);
+    }
+
+    @Test
     void servesTheApiReferencePage() throws Exception {
         start(null);
 
@@ -159,13 +198,16 @@ class CertApiServerTest {
     }
 
     private void start(String requiredScope) throws Exception {
-        DataSource dataSource = CertApiTestSupport.dataSource();
+        start(requiredScope, CertApiTestSupport.dataSource());
+    }
+
+    private void start(String requiredScope, DataSource dataSource) throws Exception {
         String introspectionUrl = "http://localhost:" + authServer.port() + "/introspect";
         CertApiConfig config = CertApiTestSupport.config(introspectionUrl, requiredScope);
         CertApiRepository repository = new CertApiRepository(dataSource);
         CertificateAuthorityService caService = CertificateAuthorityService.loadOrCreate(config, repository);
         TokenIntrospector introspector = TokenIntrospector.fromConfig(config);
-        api = new CertApiServer(config, repository, caService, introspector).app().start(0);
+        api = new CertApiServer(config, repository, caService, introspector, dataSource).app().start(0);
     }
 
     private URI uri(String path) {
@@ -188,5 +230,72 @@ class CertApiServerTest {
             request.header("Authorization", "Bearer " + token);
         }
         return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /**
+     * A {@link DataSource} that delegates normally until {@link #fail()} is
+     * called, after which every {@code getConnection} throws — standing in for
+     * a database that has become unreachable after the service started.
+     */
+    private static final class ToggleableDataSource implements DataSource {
+
+        private final DataSource delegate;
+        private volatile boolean failing;
+
+        ToggleableDataSource(DataSource delegate) {
+            this.delegate = delegate;
+        }
+
+        void fail() {
+            this.failing = true;
+        }
+
+        @Override
+        public Connection getConnection() throws SQLException {
+            if (failing) {
+                throw new SQLException("database is unreachable");
+            }
+            return delegate.getConnection();
+        }
+
+        @Override
+        public Connection getConnection(String username, String password) throws SQLException {
+            return getConnection();
+        }
+
+        @Override
+        public PrintWriter getLogWriter() throws SQLException {
+            return delegate.getLogWriter();
+        }
+
+        @Override
+        public void setLogWriter(PrintWriter out) throws SQLException {
+            delegate.setLogWriter(out);
+        }
+
+        @Override
+        public void setLoginTimeout(int seconds) throws SQLException {
+            delegate.setLoginTimeout(seconds);
+        }
+
+        @Override
+        public int getLoginTimeout() throws SQLException {
+            return delegate.getLoginTimeout();
+        }
+
+        @Override
+        public Logger getParentLogger() {
+            return Logger.getGlobal();
+        }
+
+        @Override
+        public <T> T unwrap(Class<T> iface) throws SQLException {
+            return delegate.unwrap(iface);
+        }
+
+        @Override
+        public boolean isWrapperFor(Class<?> iface) throws SQLException {
+            return delegate.isWrapperFor(iface);
+        }
     }
 }
