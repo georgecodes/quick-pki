@@ -3,6 +3,7 @@ WORKDIR /workspace
 COPY pom.xml .
 COPY quick-pki-lib/pom.xml quick-pki-lib/pom.xml
 COPY quick-pki-acme-server/pom.xml quick-pki-acme-server/pom.xml
+COPY quick-pki-cert-api/pom.xml quick-pki-cert-api/pom.xml
 RUN mvn -pl quick-pki-acme-server -am dependency:go-offline
 COPY quick-pki-lib quick-pki-lib
 COPY quick-pki-acme-server quick-pki-acme-server
