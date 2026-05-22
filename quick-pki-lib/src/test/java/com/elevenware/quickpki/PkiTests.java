@@ -1303,6 +1303,169 @@ public class PkiTests {
         return builder.build(signer);
     }
 
+    // KeyUsage bit positions: digitalSignature=0, nonRepudiation=1,
+    // keyEncipherment=2, keyAgreement=4.
+    @Test
+    void brcacProfileSetsTransportKeyUsageAndClientAuth() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("transport.example.com").build())
+                .profile(CertificateProfile.BRCAC)
+                .build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "BRCAC leaf must have a KeyUsage extension");
+        assertTrue(keyUsage[0], "BRCAC must assert digitalSignature");
+        assertTrue(keyUsage[2], "BRCAC must assert keyEncipherment");
+        assertFalse(keyUsage[1], "BRCAC must NOT assert nonRepudiation");
+
+        List<String> eku = bundle.getCertificate().getExtendedKeyUsage();
+        assertNotNull(eku, "BRCAC must have an ExtendedKeyUsage extension");
+        assertEquals(List.of(KeyPurposeId.id_kp_clientAuth.getId()), eku,
+                "BRCAC ExtendedKeyUsage must be clientAuth only");
+    }
+
+    @Test
+    void brsealProfileSetsSigningKeyUsageAndOmitsExtendedKeyUsage() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Seal Co").build())
+                .profile(CertificateProfile.BRSEAL)
+                .build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "BRSEAL leaf must have a KeyUsage extension");
+        assertTrue(keyUsage[0], "BRSEAL must assert digitalSignature");
+        assertTrue(keyUsage[1], "BRSEAL must assert nonRepudiation");
+        assertFalse(keyUsage[2], "BRSEAL must NOT assert keyEncipherment");
+
+        assertNull(bundle.getCertificate().getExtendedKeyUsage(),
+                "BRSEAL must carry no ExtendedKeyUsage extension");
+    }
+
+    @Test
+    void tlsServerAndClientProfilesPinExtendedKeyUsage() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        List<String> serverEku = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("server").build())
+                .profile(CertificateProfile.TLS_SERVER)
+                .build())
+                .getCertificate().getExtendedKeyUsage();
+        assertEquals(List.of(KeyPurposeId.id_kp_serverAuth.getId()), serverEku);
+
+        List<String> clientEku = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("client").build())
+                .profile(CertificateProfile.TLS_CLIENT)
+                .build())
+                .getCertificate().getExtendedKeyUsage();
+        assertEquals(List.of(KeyPurposeId.id_kp_clientAuth.getId()), clientEku);
+    }
+
+    @Test
+    void explicitUsagesOverrideProfileDefaults() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        // BRSEAL would default to no EKU and digitalSignature+nonRepudiation;
+        // explicit builder calls must win over the profile.
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Override").build())
+                .profile(CertificateProfile.BRSEAL)
+                .keyUsage(KeyUsageBit.DIGITAL_SIGNATURE)
+                .extendedKeyUsage(ExtendedKeyUsageId.CODE_SIGNING)
+                .build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertTrue(keyUsage[0], "explicit digitalSignature must be present");
+        assertFalse(keyUsage[1], "profile's nonRepudiation must NOT survive the override");
+
+        List<String> eku = bundle.getCertificate().getExtendedKeyUsage();
+        assertEquals(List.of(KeyPurposeId.id_kp_codeSigning.getId()), eku,
+                "explicit ExtendedKeyUsage must override the profile");
+    }
+
+    @Test
+    void defaultProfileKeepsAlgorithmAwareDefaults() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertInfo info = CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Default").build())
+                .build();
+        assertEquals(CertificateProfile.DEFAULT, info.getProfile(),
+                "an unset profile must resolve to DEFAULT");
+
+        CertificateBundle bundle = pki.issueCertificate(info);
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertTrue(keyUsage[0], "DEFAULT RSA leaf must have digitalSignature");
+        assertTrue(keyUsage[2], "DEFAULT RSA leaf must have keyEncipherment");
+
+        List<String> eku = bundle.getCertificate().getExtendedKeyUsage();
+        assertTrue(eku.contains(KeyPurposeId.id_kp_serverAuth.getId()));
+        assertTrue(eku.contains(KeyPurposeId.id_kp_clientAuth.getId()));
+    }
+
+    @Test
+    void profileBuilderRejectsNull() {
+        assertThrows(NullPointerException.class,
+                () -> CertInfo.builder().profile(null));
+    }
+
+    @Test
+    void openFinanceSubjectAttributesAppearInIssuedCertificate() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                .profile(CertificateProfile.BRCAC)
+                .subjectName(SubjectName.builder()
+                        .commonName("transport.example.com")
+                        .country("BR")
+                        .organization("Example Participant Ltda")
+                        .organizationIdentifier("OFBBR-12345678")
+                        .businessCategory("Private Organization")
+                        .jurisdictionCountry("BR")
+                        .serialNumber("12345678000199")
+                        .userId("software-statement-uuid")
+                        .build())
+                .dnsName("transport.example.com")
+                .build());
+
+        X500Name subject = new JcaX509CertificateHolder(bundle.getCertificate()).getSubject();
+        assertEquals("OFBBR-12345678",
+                subject.getRDNs(BCStyle.ORGANIZATION_IDENTIFIER)[0].getFirst().getValue().toString());
+        assertEquals("Private Organization",
+                subject.getRDNs(BCStyle.BUSINESS_CATEGORY)[0].getFirst().getValue().toString());
+        assertEquals("12345678000199",
+                subject.getRDNs(BCStyle.SERIALNUMBER)[0].getFirst().getValue().toString());
+        assertEquals("software-statement-uuid",
+                subject.getRDNs(BCStyle.UID)[0].getFirst().getValue().toString());
+        assertEquals("BR", subject.getRDNs(
+                new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.3.6.1.4.1.311.60.2.1.3"))[0]
+                .getFirst().getValue().toString());
+    }
+
+    @Test
+    void csrRoundTripsOpenFinanceSubjectAttributes() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair subscriberKeys = generateRsaKeyPair();
+
+        PKCS10CertificationRequest csr = buildCsr(subscriberKeys,
+                "CN=transport.example.com,O=Example,2.5.4.97=#0c0e4f464242522d3132333435363738",
+                List.of("transport.example.com"),
+                List.of());
+
+        SubjectName fromCsr = Csr.subjectName(csr);
+        assertEquals("OFBBR-12345678", fromCsr.getOrganizationIdentifier(),
+                "organizationIdentifier must survive the CSR round-trip");
+
+        CertificateBundle bundle = pki.issueCertificate(csr,
+                CertInfo.fromCsr(csr).profile(CertificateProfile.BRCAC).build());
+        X500Name subject = new JcaX509CertificateHolder(bundle.getCertificate()).getSubject();
+        assertEquals("OFBBR-12345678",
+                subject.getRDNs(BCStyle.ORGANIZATION_IDENTIFIER)[0].getFirst().getValue().toString());
+    }
+
     @BeforeAll
     static void setup() {
         Security.addProvider(new BouncyCastleProvider());

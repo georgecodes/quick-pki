@@ -36,6 +36,12 @@ record IssuedCertificate(
 ) {
 }
 
-/** Inbound JSON request body for {@code POST /v1/certificates}. */
-record CertificateRequest(String csr) {
+/**
+ * Inbound JSON request body for {@code POST /v1/certificates}.
+ *
+ * @param csr     a base64-encoded PKCS#10 certificate request
+ * @param profile the certificate profile name to issue under (eg. {@code
+ *                BRCAC}); optional, {@code null} means the DEFAULT profile
+ */
+record CertificateRequest(String csr, String profile) {
 }

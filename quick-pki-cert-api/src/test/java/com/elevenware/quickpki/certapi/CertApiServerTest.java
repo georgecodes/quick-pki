@@ -7,12 +7,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
+import java.io.ByteArrayInputStream;
 import java.io.PrintWriter;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Base64;
@@ -76,6 +79,40 @@ class CertApiServerTest {
         assertThat(fetched.statusCode()).isEqualTo(200);
         assertThat(Json.MAPPER.readTree(fetched.body()).get("serialNumber").asText())
                 .isEqualTo(body.get("serialNumber").asText());
+    }
+
+    @Test
+    void issuesACertificateUnderTheRequestedProfile() throws Exception {
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64Csr("seal.example.com");
+
+        HttpResponse<String> response = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\",\"profile\":\"BRSEAL\"}");
+
+        assertThat(response.statusCode()).isEqualTo(201);
+        X509Certificate cert = parseCertificate(Json.MAPPER.readTree(response.body()));
+        // BRSEAL: digitalSignature + nonRepudiation, and no EKU extension.
+        assertThat(cert.getKeyUsage()[0]).as("digitalSignature").isTrue();
+        assertThat(cert.getKeyUsage()[1]).as("nonRepudiation").isTrue();
+        assertThat(cert.getExtendedKeyUsage()).as("BRSEAL carries no EKU").isNull();
+    }
+
+    @Test
+    void rejectsAnUnknownProfile() throws Exception {
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64Csr("service.example.com");
+
+        HttpResponse<String> response = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\",\"profile\":\"NONSENSE\"}");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(Json.MAPPER.readTree(response.body()).get("error").asText()).isEqualTo("invalid_request");
+    }
+
+    private static X509Certificate parseCertificate(JsonNode body) throws Exception {
+        byte[] pem = Base64.getDecoder().decode(body.get("certificate").asText());
+        return (X509Certificate) CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(pem));
     }
 
     @Test

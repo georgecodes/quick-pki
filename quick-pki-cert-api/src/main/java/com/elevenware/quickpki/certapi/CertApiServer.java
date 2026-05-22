@@ -1,5 +1,6 @@
 package com.elevenware.quickpki.certapi;
 
+import com.elevenware.quickpki.CertificateProfile;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.router.JavalinDefaultRoutingApi;
@@ -177,7 +178,8 @@ final class CertApiServer {
     private void issueCertificate(Context ctx) {
         CertificateRequest request = parseRequest(ctx);
         PKCS10CertificationRequest csr = Csrs.parse(request.csr());
-        CertificateAuthorityService.Issued issued = caService.issue(csr);
+        CertificateProfile profile = resolveProfile(request.profile());
+        CertificateAuthorityService.Issued issued = caService.issue(csr, profile);
 
         X509Certificate certificate = issued.certificate();
         UUID id = UUID.randomUUID();
@@ -225,6 +227,16 @@ final class CertApiServer {
 
     private static String base64(String pem) {
         return Base64.getEncoder().encodeToString(pem.getBytes(StandardCharsets.UTF_8));
+    }
+
+    // Maps the optional request 'profile' field onto a CertificateProfile,
+    // turning an unknown name into a 400 rather than a 500.
+    private static CertificateProfile resolveProfile(String name) {
+        try {
+            return CertificateProfile.fromName(name);
+        } catch (IllegalArgumentException e) {
+            throw new CertApiException(400, "invalid_request", e.getMessage());
+        }
     }
 
     private CertificateRequest parseRequest(Context ctx) {

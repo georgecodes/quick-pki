@@ -54,7 +54,8 @@ final class AcmeTestSupport {
                 Duration.ofMillis(10),
                 1,
                 java.util.List.of(),
-                null);
+                null,
+                com.elevenware.quickpki.CertificateProfile.TLS_SERVER);
     }
 
     static DataSource dataSource() throws SQLException {

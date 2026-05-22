@@ -19,6 +19,7 @@ public final class CertInfo {
     private final List<String> ipAddresses;
     private final Set<KeyUsageBit> keyUsages;
     private final Set<ExtendedKeyUsageId> extendedKeyUsages;
+    private final CertificateProfile profile;
 
     private CertInfo(Builder builder) {
         this.subjectName = builder.subjectName;
@@ -26,6 +27,9 @@ public final class CertInfo {
         this.validUntil = builder.validUntil;
         this.dnsNames = List.copyOf(builder.dnsNames);
         this.ipAddresses = List.copyOf(builder.ipAddresses);
+        // Never null: a CertInfo without an explicit profile behaves exactly
+        // as QuickPki did before profiles existed.
+        this.profile = builder.profile == null ? CertificateProfile.DEFAULT : builder.profile;
         // null vs non-null distinguishes 'use the algorithm-aware default'
         // from 'use exactly these'. Defensive copy; immutable view returned
         // from the getter.
@@ -103,6 +107,14 @@ public final class CertInfo {
         return extendedKeyUsages;
     }
 
+    // The selected certificate profile; never null (defaults to
+    // CertificateProfile.DEFAULT). The profile supplies KeyUsage /
+    // ExtendedKeyUsage defaults that explicit Builder.keyUsage(...) /
+    // Builder.extendedKeyUsage(...) calls still override.
+    public CertificateProfile getProfile() {
+        return profile;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -113,13 +125,14 @@ public final class CertInfo {
                 && Objects.equals(dnsNames, that.dnsNames)
                 && Objects.equals(ipAddresses, that.ipAddresses)
                 && Objects.equals(keyUsages, that.keyUsages)
-                && Objects.equals(extendedKeyUsages, that.extendedKeyUsages);
+                && Objects.equals(extendedKeyUsages, that.extendedKeyUsages)
+                && profile == that.profile;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(subjectName, validFrom, validUntil, dnsNames,
-                ipAddresses, keyUsages, extendedKeyUsages);
+                ipAddresses, keyUsages, extendedKeyUsages, profile);
     }
 
     @Override
@@ -132,6 +145,7 @@ public final class CertInfo {
                 + ", ipAddresses=" + ipAddresses
                 + ", keyUsages=" + keyUsages
                 + ", extendedKeyUsages=" + extendedKeyUsages
+                + ", profile=" + profile
                 + '}';
     }
 
@@ -143,6 +157,7 @@ public final class CertInfo {
         private final List<String> ipAddresses = new ArrayList<>();
         private EnumSet<KeyUsageBit> keyUsages;
         private EnumSet<ExtendedKeyUsageId> extendedKeyUsages;
+        private CertificateProfile profile;
 
         private Builder() {
         }
@@ -202,6 +217,15 @@ public final class CertInfo {
                 this.extendedKeyUsages = EnumSet.noneOf(ExtendedKeyUsageId.class);
             }
             this.extendedKeyUsages.add(id);
+            return this;
+        }
+
+        // Select a certificate profile (eg. CertificateProfile.BRCAC). The
+        // profile supplies KeyUsage / ExtendedKeyUsage defaults for the leaf;
+        // explicit keyUsage(...) / extendedKeyUsage(...) calls on this builder
+        // still take precedence. Unset means CertificateProfile.DEFAULT.
+        public Builder profile(CertificateProfile profile) {
+            this.profile = Objects.requireNonNull(profile, "profile must not be null");
             return this;
         }
 

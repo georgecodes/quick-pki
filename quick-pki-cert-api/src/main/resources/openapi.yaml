@@ -199,6 +199,16 @@ components:
             A base64 encoding of a PKCS#10 certificate request. The decoded
             bytes may be either raw DER or a PEM-wrapped request.
           example: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURSBSRVFVRVNULS0tLS0K
+        profile:
+          type: string
+          enum: [DEFAULT, TLS_SERVER, TLS_CLIENT, BRCAC, BRSEAL]
+          default: DEFAULT
+          description: |
+            The certificate profile to issue under. The profile fixes the
+            leaf's KeyUsage and ExtendedKeyUsage. `BRCAC` and `BRSEAL` are the
+            Open Finance Brasil transport and signing certificate profiles.
+            Omitted or `DEFAULT` issues a general-purpose TLS leaf.
+          example: BRCAC
 
     IssuedCertificate:
       type: object

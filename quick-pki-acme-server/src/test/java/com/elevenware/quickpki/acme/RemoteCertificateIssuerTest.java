@@ -34,6 +34,7 @@ class RemoteCertificateIssuerTest {
     private final AtomicInteger tokenRequests = new AtomicInteger();
     private final AtomicInteger issueRequests = new AtomicInteger();
     private final AtomicReference<String> lastBearer = new AtomicReference<>();
+    private final AtomicReference<String> lastIssueBody = new AtomicReference<>();
 
     @BeforeEach
     void startServer() throws IOException {
@@ -51,6 +52,7 @@ class RemoteCertificateIssuerTest {
         server.createContext("/v1/certificates", exchange -> {
             issueRequests.incrementAndGet();
             lastBearer.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            lastIssueBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, 201, "{\"id\":\"" + UUID.randomUUID()
                     + "\",\"certificate\":\"" + base64(CERT_PEM)
                     + "\",\"chain\":\"" + base64(CHAIN_PEM) + "\"}");
@@ -67,7 +69,7 @@ class RemoteCertificateIssuerTest {
 
     @Test
     void issuesCertificateThroughRemoteApi() throws Exception {
-        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(remoteConfig());
+        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(remoteConfig(), com.elevenware.quickpki.CertificateProfile.TLS_SERVER);
         byte[] csr = AcmeTestSupport.csrWithDnsSan("example.test");
 
         CertificateIssuer.IssuedCertificate issued =
@@ -80,8 +82,19 @@ class RemoteCertificateIssuerTest {
     }
 
     @Test
+    void sendsConfiguredCertificateProfileToRemoteApi() throws Exception {
+        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(
+                remoteConfig(), com.elevenware.quickpki.CertificateProfile.BRCAC);
+        byte[] csr = AcmeTestSupport.csrWithDnsSan("example.test");
+
+        issuer.issue(csr, List.of(new Identifier("dns", "example.test")));
+
+        assertThat(lastIssueBody.get()).contains("\"profile\":\"BRCAC\"");
+    }
+
+    @Test
     void reusesCachedAccessTokenAcrossCalls() throws Exception {
-        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(remoteConfig());
+        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(remoteConfig(), com.elevenware.quickpki.CertificateProfile.TLS_SERVER);
         byte[] csr = AcmeTestSupport.csrWithDnsSan("example.test");
         List<Identifier> identifiers = List.of(new Identifier("dns", "example.test"));
 
@@ -94,7 +107,7 @@ class RemoteCertificateIssuerTest {
 
     @Test
     void rejectsUnvalidatedSanWithoutCallingApi() throws Exception {
-        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(remoteConfig());
+        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(remoteConfig(), com.elevenware.quickpki.CertificateProfile.TLS_SERVER);
         byte[] csr = AcmeTestSupport.csrWithDnsSan("evil.test");
 
         AcmeException error = catchThrowableOfType(
@@ -109,7 +122,7 @@ class RemoteCertificateIssuerTest {
 
     @Test
     void fetchesAndCachesIssuerCertificate() {
-        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(remoteConfig());
+        RemoteCertificateIssuer issuer = RemoteCertificateIssuer.fromConfig(remoteConfig(), com.elevenware.quickpki.CertificateProfile.TLS_SERVER);
 
         assertThat(issuer.issuerPem()).isEqualTo(ISSUER_PEM);
         assertThat(issuer.issuerPem()).isEqualTo(ISSUER_PEM);

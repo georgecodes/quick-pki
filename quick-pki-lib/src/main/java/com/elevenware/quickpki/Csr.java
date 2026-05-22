@@ -32,6 +32,10 @@ import java.util.Objects;
  */
 public final class Csr {
 
+    // jurisdictionCountryName; BCStyle has no constant for this OID.
+    private static final org.bouncycastle.asn1.ASN1ObjectIdentifier JURISDICTION_COUNTRY_NAME =
+            new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.3.6.1.4.1.311.60.2.1.3");
+
     private Csr() {}
 
     /**
@@ -87,6 +91,11 @@ public final class Csr {
         applyRdn(subject, BCStyle.DN_QUALIFIER, builder::dnQualifier);
         applyRdn(subject, BCStyle.L, builder::locality);
         applyRdn(subject, BCStyle.ST, builder::stateOrProvince);
+        applyRdn(subject, BCStyle.ORGANIZATION_IDENTIFIER, builder::organizationIdentifier);
+        applyRdn(subject, BCStyle.BUSINESS_CATEGORY, builder::businessCategory);
+        applyRdn(subject, JURISDICTION_COUNTRY_NAME, builder::jurisdictionCountry);
+        applyRdn(subject, BCStyle.SERIALNUMBER, builder::serialNumber);
+        applyRdn(subject, BCStyle.UID, builder::userId);
         return builder.build();
     }
 

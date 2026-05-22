@@ -1,6 +1,8 @@
 package com.elevenware.quickpki.certapi;
 
+import com.elevenware.quickpki.CertInfo;
 import com.elevenware.quickpki.CertificateBundle;
+import com.elevenware.quickpki.CertificateProfile;
 import com.elevenware.quickpki.IssuerInfo;
 import com.elevenware.quickpki.QuickPki;
 import com.elevenware.quickpki.QuickPkiException;
@@ -48,13 +50,16 @@ final class CertificateAuthorityService {
     }
 
     /**
-     * Signs a leaf certificate from {@code csr}. The CSR's self-signature is
-     * verified before anything is signed; subject DN and subjectAltName entries
-     * are copied from the CSR, and validity defaults to the configured lifetime.
+     * Signs a leaf certificate from {@code csr} under {@code profile}. The
+     * CSR's self-signature is verified before anything is signed; subject DN
+     * and subjectAltName entries are copied from the CSR, and validity defaults
+     * to the configured lifetime. The profile supplies the leaf's KeyUsage /
+     * ExtendedKeyUsage shape.
      */
-    Issued issue(PKCS10CertificationRequest csr) {
+    Issued issue(PKCS10CertificationRequest csr, CertificateProfile profile) {
         try {
-            CertificateBundle bundle = pki.issueCertificate(csr);
+            CertificateBundle bundle = pki.issueCertificate(csr,
+                    CertInfo.fromCsr(csr).profile(profile).build());
             return new Issued(
                     bundle.getCertificate(),
                     bundle.toCertificatePem(),
