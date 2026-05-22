@@ -37,6 +37,7 @@
     <modules>
         <module>quick-pki-lib</module>
         <module>quick-pki-acme-server</module>
+        <module>quick-pki-cert-api</module>
     </modules>
 
     <properties>
