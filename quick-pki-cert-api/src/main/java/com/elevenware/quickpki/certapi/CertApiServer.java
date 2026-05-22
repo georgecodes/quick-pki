@@ -7,6 +7,9 @@ import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
@@ -31,6 +34,7 @@ final class CertApiServer {
     private final CertApiRepository repository;
     private final CertificateAuthorityService caService;
     private final TokenIntrospector introspector;
+    private final String openApiSpec;
 
     CertApiServer(
             CertApiConfig config,
@@ -41,6 +45,10 @@ final class CertApiServer {
         this.repository = repository;
         this.caService = caService;
         this.introspector = introspector;
+        // The static spec uses a placeholder server URL so the served copy
+        // reflects however this instance is actually reached.
+        this.openApiSpec = loadResource("/openapi.yaml")
+                .replace("__SERVER_URL__", config.externalUrl());
     }
 
     void start() {
@@ -70,6 +78,36 @@ final class CertApiServer {
         routes.get("/issuer/root.pem", ctx -> ctx.contentType("application/pem-certificate-chain")
                 .result(caService.issuerPem()));
         routes.get("/healthz", ctx -> ctx.result("ok"));
+        routes.get("/openapi.yaml", ctx -> ctx.contentType("application/yaml").result(openApiSpec));
+        routes.get("/docs", ctx -> ctx.contentType("text/html").result(DOCS_PAGE));
+    }
+
+    // A self-contained API reference page; pulls Redoc from a CDN and renders
+    // the spec served at /openapi.yaml (relative, so any base path works).
+    private static final String DOCS_PAGE = """
+            <!doctype html>
+            <html>
+            <head>
+              <title>Quick-PKI Certificate API</title>
+              <meta charset="utf-8"/>
+              <meta name="viewport" content="width=device-width, initial-scale=1"/>
+            </head>
+            <body>
+              <redoc spec-url="openapi.yaml"></redoc>
+              <script src="https://cdn.redocly.com/redoc/latest/bundles/redoc.standalone.js"></script>
+            </body>
+            </html>
+            """;
+
+    private static String loadResource(String path) {
+        try (InputStream in = CertApiServer.class.getResourceAsStream(path)) {
+            if (in == null) {
+                throw new IllegalStateException("missing classpath resource " + path);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException("could not read classpath resource " + path, e);
+        }
     }
 
     // Bearer-token gate for the protected resource. Registered as a pathless
