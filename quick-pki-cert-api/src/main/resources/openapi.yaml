@@ -1,0 +1,252 @@
+openapi: 3.0.3
+info:
+  title: Quick-PKI Certificate API
+  version: "1.0.0"
+  description: |
+    A RESTful certificate issuance service. A caller submits a base64-encoded
+    PKCS#10 CSR and receives a signed certificate back in the same encoding.
+
+    Routes under `/v1` are an OAuth 2.0 protected resource: every request must
+    present a bearer access token, validated by RFC 7662 token introspection
+    against an externally configured authorization server. Callers obtain their
+    tokens using the client credentials grant. When the service is configured
+    with a required scope, the token must additionally carry that scope.
+
+    The issuer certificate, health, and documentation endpoints are
+    unauthenticated.
+servers:
+  - url: __SERVER_URL__
+    description: This deployment
+
+tags:
+  - name: Certificates
+    description: Issue and retrieve certificates
+  - name: Public
+    description: Unauthenticated endpoints
+
+paths:
+  /v1/certificates:
+    post:
+      tags: [Certificates]
+      summary: Issue a certificate from a CSR
+      description: |
+        Signs the supplied PKCS#10 certificate request with the issuing CA,
+        persists the result, and returns it. The `Location` response header
+        points at the persisted certificate resource.
+      operationId: issueCertificate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CertificateRequest'
+      responses:
+        '201':
+          description: Certificate issued
+          headers:
+            Location:
+              description: URL of the persisted certificate resource
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedCertificate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/certificates/{id}:
+    get:
+      tags: [Certificates]
+      summary: Fetch a previously issued certificate
+      operationId: getCertificate
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The certificate's UUID, as returned by the issue call.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The certificate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedCertificate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /issuer/root.pem:
+    get:
+      tags: [Public]
+      summary: Download the issuing CA certificate
+      description: Returns the issuing CA's self-signed certificate in PEM form.
+      operationId: getIssuerCertificate
+      security: []
+      responses:
+        '200':
+          description: The issuing CA certificate
+          content:
+            application/pem-certificate-chain:
+              schema:
+                type: string
+              example: |
+                -----BEGIN CERTIFICATE-----
+                MIIB...
+                -----END CERTIFICATE-----
+
+  /healthz:
+    get:
+      tags: [Public]
+      summary: Liveness/readiness probe
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: The service is up
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: OAuth 2.0 access token
+      description: |
+        An OAuth 2.0 bearer access token obtained via the client credentials
+        grant from the authorization server this service is configured to
+        trust.
+
+  schemas:
+    CertificateRequest:
+      type: object
+      required: [csr]
+      properties:
+        csr:
+          type: string
+          format: byte
+          description: |
+            A base64 encoding of a PKCS#10 certificate request. The decoded
+            bytes may be either raw DER or a PEM-wrapped request.
+          example: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURSBSRVFVRVNULS0tLS0K
+
+    IssuedCertificate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable identifier of the persisted certificate.
+        serialNumber:
+          type: string
+          description: The certificate serial number, hex-encoded.
+          example: 1a2b3c4d
+        subject:
+          type: string
+          description: The certificate subject distinguished name.
+          example: CN=service.example.com
+        certificate:
+          type: string
+          format: byte
+          description: The signed leaf certificate, as base64-encoded PEM.
+        chain:
+          type: string
+          format: byte
+          description: The certificate chain, leaf-first, as base64-encoded PEM.
+        notBefore:
+          type: string
+          format: date-time
+          description: Start of the certificate validity window.
+        notAfter:
+          type: string
+          format: date-time
+          description: End of the certificate validity window.
+        issuedAt:
+          type: string
+          format: date-time
+          description: When the service issued the certificate.
+
+    Error:
+      type: object
+      description: |
+        Error responses follow OAuth 2.0 conventions; for 401 and 403 the
+        `error` code is also echoed in a `WWW-Authenticate` header.
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+          example: invalid_request
+        error_description:
+          type: string
+          description: Human-readable explanation.
+        status:
+          type: integer
+          description: The HTTP status code.
+      required: [error, error_description, status]
+
+  responses:
+    BadRequest:
+      description: |
+        The request body or CSR was malformed. The `error` code is
+        `invalid_request` for a bad body, or `bad_csr` for a CSR that could
+        not be parsed as a PKCS#10 request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: The bearer token is missing, empty, or not active.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          description: 'Bearer challenge, e.g. Bearer error="invalid_token", ...'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The token is active but lacks the required scope.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No certificate exists with the given id.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: An unexpected error occurred while serving the request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

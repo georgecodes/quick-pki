@@ -133,6 +133,31 @@ class CertApiServerTest {
         assertThat(response.body()).contains("BEGIN CERTIFICATE");
     }
 
+    @Test
+    void servesTheOpenApiDocumentWithoutAuthentication() throws Exception {
+        start(null);
+
+        HttpResponse<String> response = get("/openapi.yaml", null);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Content-Type")).get().asString()
+                .startsWith("application/yaml");
+        assertThat(response.body()).contains("openapi: 3.0.3");
+        assertThat(response.body()).contains("/v1/certificates");
+        // The placeholder is substituted with the configured external URL.
+        assertThat(response.body()).doesNotContain("__SERVER_URL__");
+    }
+
+    @Test
+    void servesTheApiReferencePage() throws Exception {
+        start(null);
+
+        HttpResponse<String> response = get("/docs", null);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("spec-url=\"openapi.yaml\"");
+    }
+
     private void start(String requiredScope) throws Exception {
         DataSource dataSource = CertApiTestSupport.dataSource();
         String introspectionUrl = "http://localhost:" + authServer.port() + "/introspect";

@@ -43,6 +43,15 @@ Common:
 | GET    | `/v1/certificates/{id}`  | Bearer      | Fetch a previously issued cert       |
 | GET    | `/issuer/root.pem`       | none        | Download the issuing CA certificate  |
 | GET    | `/healthz`               | none        | Liveness/readiness probe             |
+| GET    | `/openapi.yaml`          | none        | OpenAPI 3.0 description of this API   |
+| GET    | `/docs`                  | none        | Browsable API reference (Redoc)      |
+
+## API documentation
+
+The service describes itself with an OpenAPI 3.0 document, served at
+`/openapi.yaml` with the `servers` URL set to this deployment's external URL.
+A browsable reference rendered with Redoc is available at `/docs`. The source
+document lives at `src/main/resources/openapi.yaml`.
 
 ### Issuing a certificate
 
