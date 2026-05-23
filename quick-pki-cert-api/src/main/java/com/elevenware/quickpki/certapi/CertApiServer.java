@@ -89,6 +89,8 @@ final class CertApiServer {
         routes.get("/v1/certificates/{id}", this::getCertificate);
         routes.post("/v1/openssl-configs/brcac", this::brcacOpensslConfig);
         routes.post("/v1/openssl-configs/brseal", this::brsealOpensslConfig);
+        routes.post("/v1/openssl-configs/qwac", this::qwacOpensslConfig);
+        routes.post("/v1/openssl-configs/qseal", this::qsealOpensslConfig);
         routes.get("/issuer/root.pem", ctx -> ctx.contentType("application/pem-certificate-chain")
                 .result(caService.issuerPem()));
         routes.get("/healthz", this::liveness);
@@ -196,6 +198,20 @@ final class CertApiServer {
                 "a JSON body with the BRSEAL subject attributes");
         String config = OpensslConfigs.forBrseal(request);
         ctx.json(new OpensslConfigResponse("brseal.cnf", base64(config)));
+    }
+
+    private void qwacOpensslConfig(Context ctx) {
+        QwacOpensslConfigRequest request = parseBody(ctx, QwacOpensslConfigRequest.class,
+                "a JSON body with the QWAC subject attributes");
+        String config = OpensslConfigs.forQwac(request);
+        ctx.json(new OpensslConfigResponse("qwac.cnf", base64(config)));
+    }
+
+    private void qsealOpensslConfig(Context ctx) {
+        QsealOpensslConfigRequest request = parseBody(ctx, QsealOpensslConfigRequest.class,
+                "a JSON body with the QSEAL subject attributes");
+        String config = OpensslConfigs.forQseal(request);
+        ctx.json(new OpensslConfigResponse("qseal.cnf", base64(config)));
     }
 
     private void persistAndRespond(Context ctx, CertificateAuthorityService.Issued issued) {

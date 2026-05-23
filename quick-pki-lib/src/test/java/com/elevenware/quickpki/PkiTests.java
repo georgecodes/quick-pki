@@ -1719,6 +1719,247 @@ public class PkiTests {
                 .build();
     }
 
+    // ----- QWAC / QSEAL profile coverage -----
+
+    @Test
+    void qwacProfileSetsTransportKeyUsageAndServerClientAuth() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(qwacInfo("psp.example.com").build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "QWAC leaf must have a KeyUsage extension");
+        assertTrue(keyUsage[0], "QWAC must assert digitalSignature");
+        assertTrue(keyUsage[2], "QWAC must assert keyEncipherment");
+
+        List<String> eku = bundle.getCertificate().getExtendedKeyUsage();
+        assertNotNull(eku, "QWAC must have an ExtendedKeyUsage extension");
+        assertTrue(eku.contains(KeyPurposeId.id_kp_serverAuth.getId()));
+        assertTrue(eku.contains(KeyPurposeId.id_kp_clientAuth.getId()));
+    }
+
+    @Test
+    void qsealProfileSetsSigningKeyUsageAndOmitsExtendedKeyUsage() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(qsealInfo("PSP Seal").build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "QSEAL leaf must have a KeyUsage extension");
+        assertTrue(keyUsage[0], "QSEAL must assert digitalSignature");
+        assertTrue(keyUsage[1], "QSEAL must assert nonRepudiation");
+        assertFalse(keyUsage[2], "QSEAL must NOT assert keyEncipherment");
+
+        assertNull(bundle.getCertificate().getExtendedKeyUsage(),
+                "QSEAL must carry no ExtendedKeyUsage extension");
+    }
+
+    @Test
+    void qwacCertificateCarriesEtsiQcStatementsExtension() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(qwacInfo("psp.example.com").build());
+
+        byte[] qcExt = bundle.getCertificate().getExtensionValue(EuQualified.OID_QC_STATEMENTS_EXTENSION);
+        assertNotNull(qcExt, "QWAC must carry the qCStatements extension (1.3.6.1.5.5.7.1.3)");
+        Set<String> statementOids = extractQcStatementOids(qcExt);
+        assertTrue(statementOids.contains(EuQualified.OID_QC_COMPLIANCE),
+                "QWAC must include QcCompliance, got " + statementOids);
+        assertTrue(statementOids.contains(EuQualified.OID_QC_TYPE),
+                "QWAC must include QcType, got " + statementOids);
+    }
+
+    @Test
+    void qsealCertificateCarriesQcTypeESeal() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(qsealInfo("PSP Seal").build());
+
+        byte[] qcExt = bundle.getCertificate().getExtensionValue(EuQualified.OID_QC_STATEMENTS_EXTENSION);
+        assertNotNull(qcExt, "QSEAL must carry the qCStatements extension");
+        assertTrue(qcTypeValuesOf(qcExt).contains(EuQualified.OID_QC_TYPE_ESEAL),
+                "QSEAL QcType must reference id-etsi-qct-eseal");
+    }
+
+    @Test
+    void qwacProfileRejectsMissingQcCompliance() {
+        QuickPki pki = QuickPki.createDefault();
+
+        // Build a QWAC CertInfo but strip the default qcStatements at the
+        // builder level - validator must reject.
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(EuQualified.qwac()
+                        .country("GB")
+                        .organization("Example PSP plc")
+                        .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                        .commonName("psp.example.com")
+                        .dnsName("psp.example.com")
+                        .omitDefaultQcStatements()
+                        .toCertInfo().build()));
+
+        assertTrue(ex.getMessage().contains("QcCompliance"),
+                "message should call out the missing QcCompliance statement, got: " + ex.getMessage());
+    }
+
+    @Test
+    void qwacProfileRejectsMissingOrganizationIdentifier() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(EuQualified.qwac()
+                        .country("GB")
+                        .organization("Example PSP plc")
+                        .commonName("psp.example.com")
+                        .dnsName("psp.example.com")
+                        .toCertInfo().build()));
+
+        assertTrue(ex.getMessage().toLowerCase().contains("organizationidentifier"),
+                "message should call out the missing organizationIdentifier, got: " + ex.getMessage());
+    }
+
+    @Test
+    void qwacProfileRejectsMissingDnsSubjectAltName() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(EuQualified.qwac()
+                        .country("GB")
+                        .organization("Example PSP plc")
+                        .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                        .commonName("psp.example.com")
+                        .toCertInfo().build()));
+
+        assertTrue(ex.getMessage().toLowerCase().contains("dns"),
+                "message should explain the missing DNS SAN, got: " + ex.getMessage());
+    }
+
+    @Test
+    void qwacProfileRejectsRsaKeySmallerThan2048() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(1024);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(qwacInfo("psp.example.com").build(),
+                        generator.generateKeyPair().getPublic()));
+
+        assertTrue(ex.getMessage().contains("2048"),
+                "message should call out the 2048-bit floor, got: " + ex.getMessage());
+    }
+
+    @Test
+    void qsealCertificateCarriesPsd2QcStatementWhenRequested() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertInfo info = EuQualified.qseal()
+                .country("GB")
+                .organization("Example PSP plc")
+                .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                .commonName("PSP Seal")
+                .psd2(Set.of(EuQualified.Psd2Role.PSP_AS, EuQualified.Psd2Role.PSP_AI),
+                        "Financial Conduct Authority", "GB-FCA")
+                .onQscd()
+                .toCertInfo().build();
+
+        CertificateBundle bundle = pki.issueCertificate(info);
+
+        byte[] qcExt = bundle.getCertificate().getExtensionValue(EuQualified.OID_QC_STATEMENTS_EXTENSION);
+        Set<String> oids = extractQcStatementOids(qcExt);
+        assertTrue(oids.contains(EuQualified.OID_PSD2_QC_STATEMENT),
+                "expected PSD2 qcStatement OID present, got " + oids);
+        assertTrue(oids.contains(EuQualified.OID_QC_SSCD),
+                "expected QcSSCD OID present (onQscd was called), got " + oids);
+    }
+
+    @Test
+    void qwacSubjectRdnsFollowEtsiOrder() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        X500Name subject = new JcaX509CertificateHolder(
+                pki.issueCertificate(qwacInfo("psp.example.com").build()).getCertificate())
+                .getSubject();
+
+        org.bouncycastle.asn1.x500.RDN[] rdns = subject.getRDNs();
+        assertEquals(BCStyle.C, rdns[0].getFirst().getType());
+        assertEquals(BCStyle.O, rdns[1].getFirst().getType());
+        assertEquals(BCStyle.ORGANIZATION_IDENTIFIER, rdns[2].getFirst().getType());
+        assertEquals(BCStyle.CN, rdns[3].getFirst().getType());
+    }
+
+    @Test
+    void psd2OrganizationIdentifierFormatsAsTs119495() {
+        assertEquals("PSDGB-FCA-123456",
+                EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"));
+        assertEquals("PSDDE-BAFIN-987654",
+                EuQualified.psd2OrganizationIdentifier("de", "BAFIN", "987654"));
+        assertThrows(IllegalArgumentException.class,
+                () -> EuQualified.psd2OrganizationIdentifier("GBR", "FCA", "123456"));
+    }
+
+    @Test
+    void certificateProfileEnumIncludesQwacAndQseal() {
+        assertEquals(CertificateProfile.QWAC, CertificateProfile.fromName("qwac"));
+        assertEquals(CertificateProfile.QSEAL, CertificateProfile.fromName("QSEAL"));
+    }
+
+    private static CertInfo.Builder qwacInfo(String commonName) {
+        return EuQualified.qwac()
+                .country("GB")
+                .organization("Example PSP plc")
+                .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                .commonName(commonName)
+                .dnsName(commonName)
+                .toCertInfo();
+    }
+
+    private static CertInfo.Builder qsealInfo(String commonName) {
+        return EuQualified.qseal()
+                .country("GB")
+                .organization("Example PSP plc")
+                .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                .commonName(commonName)
+                .toCertInfo();
+    }
+
+    private static Set<String> extractQcStatementOids(byte[] extensionValue) throws IOException {
+        // Strip the OCTET STRING wrapper that getExtensionValue() returns.
+        org.bouncycastle.asn1.ASN1OctetString wrapper =
+                org.bouncycastle.asn1.ASN1OctetString.getInstance(extensionValue);
+        org.bouncycastle.asn1.ASN1Sequence sequence =
+                org.bouncycastle.asn1.ASN1Sequence.getInstance(wrapper.getOctets());
+        Set<String> oids = new HashSet<>();
+        for (int i = 0; i < sequence.size(); i++) {
+            org.bouncycastle.asn1.ASN1Sequence stmt =
+                    org.bouncycastle.asn1.ASN1Sequence.getInstance(sequence.getObjectAt(i));
+            oids.add(org.bouncycastle.asn1.ASN1ObjectIdentifier.getInstance(stmt.getObjectAt(0)).getId());
+        }
+        return oids;
+    }
+
+    private static Set<String> qcTypeValuesOf(byte[] extensionValue) throws IOException {
+        org.bouncycastle.asn1.ASN1OctetString wrapper =
+                org.bouncycastle.asn1.ASN1OctetString.getInstance(extensionValue);
+        org.bouncycastle.asn1.ASN1Sequence sequence =
+                org.bouncycastle.asn1.ASN1Sequence.getInstance(wrapper.getOctets());
+        Set<String> values = new HashSet<>();
+        for (int i = 0; i < sequence.size(); i++) {
+            org.bouncycastle.asn1.ASN1Sequence stmt =
+                    org.bouncycastle.asn1.ASN1Sequence.getInstance(sequence.getObjectAt(i));
+            if (!EuQualified.OID_QC_TYPE.equals(
+                    org.bouncycastle.asn1.ASN1ObjectIdentifier.getInstance(stmt.getObjectAt(0)).getId())) {
+                continue;
+            }
+            if (stmt.size() < 2) {
+                continue;
+            }
+            org.bouncycastle.asn1.ASN1Sequence types =
+                    org.bouncycastle.asn1.ASN1Sequence.getInstance(stmt.getObjectAt(1));
+            for (int j = 0; j < types.size(); j++) {
+                values.add(org.bouncycastle.asn1.ASN1ObjectIdentifier.getInstance(types.getObjectAt(j)).getId());
+            }
+        }
+        return values;
+    }
+
     @BeforeAll
     static void setup() {
         Security.addProvider(new BouncyCastleProvider());

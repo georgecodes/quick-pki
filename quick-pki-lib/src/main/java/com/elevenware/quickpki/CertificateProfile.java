@@ -19,6 +19,9 @@ import java.util.stream.Collectors;
  *
  * <p>{@link #BRCAC} and {@link #BRSEAL} model the transport and signing
  * certificate profiles from the Open Finance Brasil certificate standards.
+ * {@link #QWAC} and {@link #QSEAL} model the EU eIDAS / PSD2 Qualified Web
+ * Authentication and Qualified Electronic Seal profiles
+ * (ETSI EN 319 412-2/-3 and ETSI TS 119 495 for the PSD2 attribute set).
  */
 public enum CertificateProfile {
 
@@ -50,6 +53,30 @@ public enum CertificateProfile {
      * all. Used to sign message payloads (JWS) between participants.
      */
     BRSEAL(
+            EnumSet.of(KeyUsageBit.DIGITAL_SIGNATURE, KeyUsageBit.NON_REPUDIATION),
+            EnumSet.noneOf(ExtendedKeyUsageId.class)),
+
+    /**
+     * EU Qualified Web Authentication Certificate (QWAC): KeyUsage
+     * digitalSignature + keyEncipherment, ExtendedKeyUsage
+     * serverAuth + clientAuth. Used by PSPs under PSD2 to identify themselves
+     * to ASPSPs and to TPP clients during mutual TLS. Profile compliance also
+     * requires the standard ETSI QC statements (QcCompliance + QcType=web);
+     * {@link EuQualified#qwac()} emits them by default.
+     */
+    QWAC(
+            EnumSet.of(KeyUsageBit.DIGITAL_SIGNATURE, KeyUsageBit.KEY_ENCIPHERMENT),
+            EnumSet.of(ExtendedKeyUsageId.SERVER_AUTH, ExtendedKeyUsageId.CLIENT_AUTH)),
+
+    /**
+     * EU Qualified Electronic Seal Certificate (QSEAL): KeyUsage
+     * digitalSignature + nonRepudiation, and no ExtendedKeyUsage extension at
+     * all. Used to seal message payloads (eg. detached JWS signatures over
+     * PSD2 API messages). Profile compliance also requires the standard ETSI
+     * QC statements (QcCompliance + QcType=eseal); {@link EuQualified#qseal()}
+     * emits them by default.
+     */
+    QSEAL(
             EnumSet.of(KeyUsageBit.DIGITAL_SIGNATURE, KeyUsageBit.NON_REPUDIATION),
             EnumSet.noneOf(ExtendedKeyUsageId.class));
 

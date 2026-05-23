@@ -1,6 +1,7 @@
 package com.elevenware.quickpki.certapi;
 
 import com.elevenware.quickpki.CertInfo;
+import com.elevenware.quickpki.EuQualified;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
@@ -88,6 +89,26 @@ final class CertApiTestSupport {
                 extGen.generate());
         ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
         PKCS10CertificationRequest csr = builder.build(signer);
+        return Base64.getEncoder().encodeToString(csr.getEncoded());
+    }
+
+    /**
+     * Builds a QWAC-compliant CSR via the {@link EuQualified} helper - subject
+     * in the ETSI EN 319 412-1 order, default qcStatements baked into the
+     * extensionRequest. Used by the cert-api round-trip tests that exercise
+     * issuance under the QWAC profile.
+     */
+    static String base64QwacCsr(String commonName) throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+        PKCS10CertificationRequest csr = EuQualified.qwac()
+                .country("GB")
+                .organization("Example PSP plc")
+                .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                .commonName(commonName)
+                .dnsName(commonName)
+                .buildCsr(keyPair);
         return Base64.getEncoder().encodeToString(csr.getEncoded());
     }
 

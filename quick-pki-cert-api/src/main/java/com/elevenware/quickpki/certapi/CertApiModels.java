@@ -98,6 +98,62 @@ record BrsealOpensslConfigRequest(
 }
 
 /**
+ * Inbound JSON request body for {@code POST /v1/openssl-configs/qwac}.
+ * Collects the QWAC subject attributes and PSD2 metadata the server bakes
+ * into the openssl {@code req} config. The config emits the standard ETSI
+ * QC statements (QcCompliance + QcType=web) and, when {@code psd2Roles} is
+ * populated, the PSD2 qcStatement listing the PSP's roles and NCA.
+ *
+ * <p>Field reference: ETSI EN 319 412-1 §5.1 for the subject DN attributes,
+ * ETSI TS 119 495 §5 for the PSD2 organizationIdentifier and qcStatement
+ * payload.
+ */
+record QwacOpensslConfigRequest(
+        String commonName,
+        String country,
+        String stateOrProvince,
+        String locality,
+        String organization,
+        String organizationIdentifier,
+        String serialNumber,
+        List<String> dnsNames,
+        List<String> psd2Roles,
+        String ncaName,
+        String ncaId,
+        List<PdsLocationRequest> pdsLocations
+) {
+}
+
+/**
+ * Inbound JSON request body for {@code POST /v1/openssl-configs/qseal}.
+ * Same shape as {@link QwacOpensslConfigRequest} but produces a config for
+ * the QSEAL profile - no DNS SANs, QcType set to {@code id-etsi-qct-eseal},
+ * optional {@code QcSSCD} qcStatement when {@code onQscd} is {@code true}.
+ */
+record QsealOpensslConfigRequest(
+        String commonName,
+        String country,
+        String stateOrProvince,
+        String locality,
+        String organization,
+        String organizationIdentifier,
+        String serialNumber,
+        List<String> psd2Roles,
+        String ncaName,
+        String ncaId,
+        List<PdsLocationRequest> pdsLocations,
+        boolean onQscd
+) {
+}
+
+/**
+ * A single PDS URL / language pair carried in the {@code QcPDS} qcStatement
+ * payload. Language must be an ISO 639-1 two-letter code (eg. {@code "en"}).
+ */
+record PdsLocationRequest(String url, String language) {
+}
+
+/**
  * Response body for {@code POST /v1/openssl-configs/{brcac,brseal}}: the
  * generated openssl {@code req} config, base64-encoded (consistent with how
  * CSRs and certs travel on this API), plus a suggested filename for callers

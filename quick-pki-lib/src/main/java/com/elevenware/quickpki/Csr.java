@@ -1,7 +1,10 @@
 package com.elevenware.quickpki;
 
+import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1OctetString;
+import org.bouncycastle.asn1.ASN1Sequence;
+import org.bouncycastle.asn1.DERSequence;
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
 import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -92,14 +95,20 @@ public final class Csr {
             sans.add(new GeneralName(GeneralName.iPAddress, ipAddress));
         }
         sans.addAll(info.getOtherSubjectAlternativeNames());
-        if (!sans.isEmpty()) {
-            ExtensionsGenerator extGen = new ExtensionsGenerator();
-            try {
+        ExtensionsGenerator extGen = new ExtensionsGenerator();
+        try {
+            if (!sans.isEmpty()) {
                 extGen.addExtension(Extension.subjectAlternativeName, false,
                         new GeneralNames(sans.toArray(new GeneralName[0])));
-            } catch (IOException e) {
-                throw new QuickPkiException("Failed to build CSR subjectAltName extension", e);
             }
+            if (!info.getQcStatements().isEmpty()) {
+                extGen.addExtension(Extension.qCStatements, false,
+                        encodeQcStatements(info.getQcStatements()));
+            }
+        } catch (IOException e) {
+            throw new QuickPkiException("Failed to build CSR extensionRequest", e);
+        }
+        if (!extGen.isEmpty()) {
             builder.addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extGen.generate());
         }
 
@@ -187,6 +196,24 @@ public final class Csr {
             for (String organizationUnit : info.getOrganizationUnits()) {
                 addRdnIfPresent(builder, BCStyle.OU, organizationUnit);
             }
+            addRdnIfPresent(builder, BCStyle.CN, info.getCommonName());
+            return builder.build();
+        }
+        if (effective == CertificateProfile.QWAC || effective == CertificateProfile.QSEAL) {
+            // ETSI EN 319 412-1 §5.1.2 / -3 §4.2 subject DN order for
+            // legal-person qualified certs. countryName first, then the EV
+            // attributes, then the organizationIdentifier required by
+            // ETSI EN 319 412-1 §5.1.4 (PSDxx-NCA-PSP for PSD2 contexts),
+            // commonName last.
+            addRdnIfPresent(builder, BCStyle.C, info.getCountry());
+            addRdnIfPresent(builder, BCStyle.ST, info.getStateOrProvince());
+            addRdnIfPresent(builder, BCStyle.L, info.getLocality());
+            addRdnIfPresent(builder, BCStyle.O, info.getOrganization());
+            for (String organizationUnit : info.getOrganizationUnits()) {
+                addRdnIfPresent(builder, BCStyle.OU, organizationUnit);
+            }
+            addRdnIfPresent(builder, BCStyle.SERIALNUMBER, info.getSerialNumber());
+            addRdnIfPresent(builder, BCStyle.ORGANIZATION_IDENTIFIER, info.getOrganizationIdentifier());
             addRdnIfPresent(builder, BCStyle.CN, info.getCommonName());
             return builder.build();
         }
@@ -306,6 +333,60 @@ public final class Csr {
      */
     public static List<String> ipSubjectAlternativeNames(PKCS10CertificationRequest csr) {
         return sansOfTag(csr, GeneralName.iPAddress);
+    }
+
+    /**
+     * Returns the QCStatements (RFC 3739) requested in the CSR's
+     * extensionRequest, preserving each statement's ASN.1 payload. Empty list
+     * when the CSR omitted the extension. Used by
+     * {@link CertInfo#fromCsr(PKCS10CertificationRequest)} to carry the EU
+     * qualified statements (QcCompliance, QcType, QcPDS, PSD2 qcStatement)
+     * through to the issued certificate.
+     */
+    public static List<QcStatement> qcStatements(PKCS10CertificationRequest csr) {
+        Objects.requireNonNull(csr, "csr must not be null");
+        Extensions extensions = csr.getRequestedExtensions();
+        if (extensions == null) {
+            return List.of();
+        }
+        Extension qcExt = extensions.getExtension(Extension.qCStatements);
+        if (qcExt == null) {
+            return List.of();
+        }
+        ASN1Sequence sequence;
+        try {
+            sequence = ASN1Sequence.getInstance(qcExt.getParsedValue());
+        } catch (Exception e) {
+            throw new QuickPkiException("CSR carries a malformed qCStatements extension", e);
+        }
+        List<QcStatement> result = new ArrayList<>(sequence.size());
+        for (int i = 0; i < sequence.size(); i++) {
+            ASN1Sequence stmt = ASN1Sequence.getInstance(sequence.getObjectAt(i));
+            ASN1ObjectIdentifier oid = ASN1ObjectIdentifier.getInstance(stmt.getObjectAt(0));
+            ASN1Encodable info = stmt.size() > 1 ? stmt.getObjectAt(1) : null;
+            result.add(new QcStatement(oid, info));
+        }
+        return List.copyOf(result);
+    }
+
+    /**
+     * Encodes a list of {@link QcStatement}s as the {@code SEQUENCE OF
+     * QCStatement} structure mandated by RFC 3739 §3.2.6, ready to wrap in an
+     * X.509 Extension value or hand to openssl as a {@code DER:} blob.
+     */
+    public static DERSequence encodeQcStatements(List<QcStatement> statements) {
+        ASN1Encodable[] entries = new ASN1Encodable[statements.size()];
+        for (int i = 0; i < statements.size(); i++) {
+            QcStatement s = statements.get(i);
+            if (s.statementInfo() == null) {
+                entries[i] = new DERSequence(s.statementId());
+            } else {
+                entries[i] = new DERSequence(new ASN1Encodable[] {
+                        s.statementId(), s.statementInfo()
+                });
+            }
+        }
+        return new DERSequence(entries);
     }
 
     /**

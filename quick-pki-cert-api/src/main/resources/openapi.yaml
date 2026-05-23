@@ -22,7 +22,9 @@ tags:
   - name: Certificates
     description: Issue and retrieve certificates
   - name: OpenSSL configs
-    description: Generate openssl req configs for the Open Finance Brasil certificate profiles
+    description: |
+      Generate openssl req configs for the Open Finance Brasil and EU eIDAS /
+      PSD2 qualified certificate profiles
   - name: Public
     description: Unauthenticated endpoints
 
@@ -126,6 +128,77 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/BrsealOpensslConfigRequest'
+      responses:
+        '200':
+          description: openssl config generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpensslConfigResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/openssl-configs/qwac:
+    post:
+      tags: [OpenSSL configs]
+      summary: Generate an openssl req config for an EU PSD2 QWAC CSR
+      description: |
+        Returns an openssl `req` config that bakes in the QWAC subject DN
+        (in the ETSI EN 319 412-1 RDN order), the requested DNS SANs, the two
+        mandatory ETSI QC statements (QcCompliance + QcType=web), and -- when
+        `psd2Roles` is supplied -- the PSD2 qcStatement listing the PSP roles
+        and supervising NCA. The resulting CSR can be submitted to
+        `POST /v1/certificates` with `profile=QWAC` for issuance.
+      operationId: generateQwacOpensslConfig
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QwacOpensslConfigRequest'
+      responses:
+        '200':
+          description: openssl config generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpensslConfigResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/openssl-configs/qseal:
+    post:
+      tags: [OpenSSL configs]
+      summary: Generate an openssl req config for an EU PSD2 QSEAL CSR
+      description: |
+        QSEAL counterpart to `/v1/openssl-configs/qwac`. Returns an openssl
+        `req` config with the QSEAL subject DN, no DNS SANs, no
+        ExtendedKeyUsage, and the mandatory ETSI QC statements
+        (QcCompliance + QcType=eseal). The resulting CSR can be submitted to
+        `POST /v1/certificates` with `profile=QSEAL` for issuance.
+      operationId: generateQsealOpensslConfig
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QsealOpensslConfigRequest'
       responses:
         '200':
           description: openssl config generated
@@ -279,16 +352,19 @@ components:
           example: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURSBSRVFVRVNULS0tLS0K
         profile:
           type: string
-          enum: [DEFAULT, TLS_SERVER, TLS_CLIENT, BRCAC, BRSEAL]
+          enum: [DEFAULT, TLS_SERVER, TLS_CLIENT, BRCAC, BRSEAL, QWAC, QSEAL]
           default: DEFAULT
           description: |
             The certificate profile to issue under. The profile fixes the
             leaf's KeyUsage and ExtendedKeyUsage. `BRCAC` and `BRSEAL` are the
-            Open Finance Brasil transport and signing certificate profiles.
-            For those profiles the CSR subject and subjectAltName extension
-            must carry the Open Finance Brasil attributes required by the
-            certificate standard; non-compliant CSRs are rejected with
-            `bad_csr`.
+            Open Finance Brasil transport and signing certificate profiles;
+            `QWAC` and `QSEAL` are the EU eIDAS / PSD2 Qualified Web
+            Authentication and Qualified Electronic Seal profiles
+            (ETSI EN 319 412-2/-3, ETSI TS 119 495 for the PSD2 attribute
+            set). For any non-DEFAULT profile the CSR subject, subjectAltName
+            extension, and -- for `QWAC` / `QSEAL` -- the requested
+            qCStatements extension must carry the attributes the profile
+            requires; non-compliant CSRs are rejected with `bad_csr`.
             Omitted or `DEFAULT` issues a general-purpose TLS leaf.
           example: BRCAC
 
@@ -401,6 +477,141 @@ components:
           type: string
           description: ICP-Brasil otherName `2.16.76.1.3.7`.
           example: "123456789012"
+
+    QwacOpensslConfigRequest:
+      type: object
+      required:
+        - commonName
+        - country
+        - organization
+        - organizationIdentifier
+        - dnsNames
+      properties:
+        commonName:
+          type: string
+          description: Subject commonName; typically the transport hostname.
+          example: psp.example.com
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: Two-letter ISO 3166-1 country code.
+          example: GB
+        stateOrProvince:
+          type: string
+        locality:
+          type: string
+        organization:
+          type: string
+          description: Legal-person registered name.
+          example: Example PSP plc
+        organizationIdentifier:
+          type: string
+          description: |
+            ETSI EN 319 412-1 §5.1.4 organizationIdentifier. For PSD2 use the
+            `PSD{country}-{NCA-Id}-{PSP-Id}` syntax from ETSI TS 119 495.
+          example: PSDGB-FCA-123456
+        serialNumber:
+          type: string
+          description: Optional subject serialNumber RDN.
+        dnsNames:
+          type: array
+          items:
+            type: string
+          description: DNS subjectAltName entries; at least one is required.
+          example:
+            - psp.example.com
+        psd2Roles:
+          type: array
+          items:
+            type: string
+            enum: [PSP_AS, PSP_PI, PSP_AI, PSP_IC]
+          description: |
+            Optional. When supplied the config emits the PSD2 qcStatement
+            (`0.4.0.19495.2`) listing these PSP roles and the supervising
+            NCA. Requires `ncaName` and `ncaId`.
+        ncaName:
+          type: string
+          description: Supervising National Competent Authority name (PSD2).
+          example: Financial Conduct Authority
+        ncaId:
+          type: string
+          description: Supervising NCA identifier (PSD2).
+          example: GB-FCA
+        pdsLocations:
+          type: array
+          description: |
+            Optional. PKI Disclosure Statement URLs, emitted as a `QcPDS`
+            qcStatement.
+          items:
+            $ref: '#/components/schemas/PdsLocation'
+
+    QsealOpensslConfigRequest:
+      type: object
+      required:
+        - commonName
+        - country
+        - organization
+        - organizationIdentifier
+      properties:
+        commonName:
+          type: string
+          example: PSP Seal
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          example: GB
+        stateOrProvince:
+          type: string
+        locality:
+          type: string
+        organization:
+          type: string
+          example: Example PSP plc
+        organizationIdentifier:
+          type: string
+          example: PSDGB-FCA-123456
+        serialNumber:
+          type: string
+        psd2Roles:
+          type: array
+          items:
+            type: string
+            enum: [PSP_AS, PSP_PI, PSP_AI, PSP_IC]
+          description: |
+            Optional. When supplied the config emits the PSD2 qcStatement.
+            Requires `ncaName` and `ncaId`.
+        ncaName:
+          type: string
+        ncaId:
+          type: string
+        pdsLocations:
+          type: array
+          items:
+            $ref: '#/components/schemas/PdsLocation'
+        onQscd:
+          type: boolean
+          default: false
+          description: |
+            When `true` the config emits the `QcSSCD` qcStatement, signalling
+            that the private key is held on a Qualified Signature/Seal
+            Creation Device.
+
+    PdsLocation:
+      type: object
+      required: [url, language]
+      properties:
+        url:
+          type: string
+          format: uri
+          example: https://example.com/pki/pds-en.pdf
+        language:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: ISO 639-1 two-letter language code.
+          example: en
 
     OpensslConfigResponse:
       type: object
