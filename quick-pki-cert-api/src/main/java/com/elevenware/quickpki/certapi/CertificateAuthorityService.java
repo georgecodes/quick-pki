@@ -3,6 +3,7 @@ package com.elevenware.quickpki.certapi;
 import com.elevenware.quickpki.CertInfo;
 import com.elevenware.quickpki.CertificateBundle;
 import com.elevenware.quickpki.CertificateProfile;
+import com.elevenware.quickpki.Csr;
 import com.elevenware.quickpki.IssuerInfo;
 import com.elevenware.quickpki.QuickPki;
 import com.elevenware.quickpki.QuickPkiException;
@@ -54,7 +55,8 @@ final class CertificateAuthorityService {
      * CSR's self-signature is verified before anything is signed; subject DN
      * and subjectAltName entries are copied from the CSR, and validity defaults
      * to the configured lifetime. The profile supplies the leaf's KeyUsage /
-     * ExtendedKeyUsage shape.
+     * ExtendedKeyUsage shape. The CSR PEM is returned alongside the cert so
+     * the API layer can persist it for audit.
      */
     Issued issue(PKCS10CertificationRequest csr, CertificateProfile profile) {
         try {
@@ -63,7 +65,8 @@ final class CertificateAuthorityService {
             return new Issued(
                     bundle.getCertificate(),
                     bundle.toCertificatePem(),
-                    bundle.toCertificateChainPem());
+                    bundle.toCertificateChainPem(),
+                    Csr.toPem(csr));
         } catch (IllegalArgumentException e) {
             throw new CertApiException(400, "bad_csr",
                     "could not issue a " + profile + " certificate from the supplied CSR: "
@@ -144,7 +147,10 @@ final class CertificateAuthorityService {
                 .build();
     }
 
-    /** A freshly signed leaf certificate plus its PEM encodings. */
-    record Issued(X509Certificate certificate, String certificatePem, String chainPem) {
+    /**
+     * A freshly signed leaf certificate plus its PEM encodings and the CSR
+     * it was issued from.
+     */
+    record Issued(X509Certificate certificate, String certificatePem, String chainPem, String csrPem) {
     }
 }

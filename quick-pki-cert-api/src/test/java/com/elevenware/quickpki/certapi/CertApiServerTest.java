@@ -168,6 +168,145 @@ class CertApiServerTest {
     }
 
     @Test
+    void generatesABrcacOpensslConfig() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "transport.example.com",
+                  "businessCategory": "Private Organization",
+                  "serialNumber": "12345678000199",
+                  "organization": "Example Participant Ltda",
+                  "stateOrProvince": "SP",
+                  "locality": "Sao Paulo",
+                  "organizationIdentifier": "OFBBR-12345678",
+                  "userId": "software-statement-uuid",
+                  "dnsNames": ["transport.example.com"]
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/brcac", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode jsonBody = Json.MAPPER.readTree(response.body());
+        assertThat(jsonBody.get("filename").asText()).isEqualTo("brcac.cnf");
+        String config = new String(Base64.getDecoder().decode(jsonBody.get("config").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(config).contains("commonName = transport.example.com");
+        assertThat(config).contains("organizationIdentifier = OFBBR-12345678");
+        assertThat(config).contains("jurisdictionCountryName = BR"); // defaulted
+        assertThat(config).contains("countryName = BR"); // defaulted
+        assertThat(config).contains("DNS.1 = transport.example.com");
+        assertThat(config).contains("keyUsage = critical, digitalSignature, keyEncipherment");
+        assertThat(config).contains("extendedKeyUsage = clientAuth");
+        // Custom OIDs that openssl doesn't know by short name are declared.
+        assertThat(config).contains("jurisdictionCountryName = 1.3.6.1.4.1.311.60.2.1.3");
+        assertThat(config).contains("organizationIdentifier = 2.5.4.97");
+    }
+
+    @Test
+    void generatesABrsealOpensslConfig() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "Seal Co",
+                  "userId": "OFBBR-12345678",
+                  "organizationUnits": ["Example CA", "12345678000199",
+                                        "Validacao por certificado digital"],
+                  "responsiblePersonName": "Responsible Person",
+                  "companyCnpj": "12345678000199",
+                  "responsiblePersonData": "197001010000000000000",
+                  "companyCei": "123456789012"
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/brseal", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode jsonBody = Json.MAPPER.readTree(response.body());
+        assertThat(jsonBody.get("filename").asText()).isEqualTo("brseal.cnf");
+        String config = new String(Base64.getDecoder().decode(jsonBody.get("config").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(config).contains("organizationName = ICP-Brasil"); // defaulted
+        // Repeated OU keys are emitted with unique prefixes per the openssl trick.
+        assertThat(config).contains("0.organizationalUnitName.0 = Example CA");
+        assertThat(config).contains("0.organizationalUnitName.1 = 12345678000199");
+        assertThat(config)
+                .contains("0.organizationalUnitName.2 = Validacao por certificado digital");
+        // All four ICP-Brasil otherName OIDs are present in the SAN section.
+        assertThat(config).contains("otherName.0 = 2.16.76.1.3.2;UTF8:Responsible Person");
+        assertThat(config).contains("otherName.1 = 2.16.76.1.3.3;UTF8:12345678000199");
+        assertThat(config).contains("otherName.2 = 2.16.76.1.3.4;UTF8:197001010000000000000");
+        assertThat(config).contains("otherName.3 = 2.16.76.1.3.7;UTF8:123456789012");
+        assertThat(config).contains("keyUsage = critical, digitalSignature, nonRepudiation");
+        // BRSEAL deliberately carries no EKU.
+        assertThat(config).doesNotContain("extendedKeyUsage");
+    }
+
+    @Test
+    void rejectsBrcacOpensslConfigRequestMissingRequiredFields() throws Exception {
+        start("certificates:issue");
+
+        HttpResponse<String> response = post("/v1/openssl-configs/brcac", "active-token",
+                "{\"commonName\":\"transport.example.com\"}");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        JsonNode bodyJson = Json.MAPPER.readTree(response.body());
+        assertThat(bodyJson.get("error").asText()).isEqualTo("invalid_request");
+    }
+
+    @Test
+    void rejectsBrsealOpensslConfigRequestWithTooFewOrganizationUnits() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "Seal Co",
+                  "userId": "OFBBR-12345678",
+                  "organizationUnits": ["just one OU"],
+                  "responsiblePersonName": "Responsible Person",
+                  "companyCnpj": "12345678000199",
+                  "responsiblePersonData": "197001010000000000000",
+                  "companyCei": "123456789012"
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/brseal", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(Json.MAPPER.readTree(response.body()).get("error_description").asText())
+                .contains("organizationUnits");
+    }
+
+    @Test
+    void opensslConfigEndpointsAreAuthenticated() throws Exception {
+        start("certificates:issue");
+
+        HttpResponse<String> brcac = post("/v1/openssl-configs/brcac", "expired-token", "{}");
+        assertThat(brcac.statusCode()).isEqualTo(401);
+
+        HttpResponse<String> brseal = post("/v1/openssl-configs/brseal", "expired-token", "{}");
+        assertThat(brseal.statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void issuedCertificatesEndpointReturnsTheCsrAlongsideTheCert() throws Exception {
+        // Round-trip through the existing CSR endpoint: the CSR a caller
+        // submitted is now persisted and served back via GET.
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64Csr("service.example.com");
+
+        HttpResponse<String> issued = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\"}");
+        String id = Json.MAPPER.readTree(issued.body()).get("id").asText();
+
+        HttpResponse<String> fetched = get("/v1/certificates/" + id, "active-token");
+        assertThat(fetched.statusCode()).isEqualTo(200);
+        String csrPem = new String(Base64.getDecoder().decode(
+                Json.MAPPER.readTree(fetched.body()).get("csr").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(csrPem).contains("BEGIN CERTIFICATE REQUEST");
+    }
+
+    @Test
     void rejectsAMalformedCsr() throws Exception {
         start("certificates:issue");
 

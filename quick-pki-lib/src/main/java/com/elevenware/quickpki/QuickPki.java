@@ -3,7 +3,6 @@ package com.elevenware.quickpki;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
@@ -502,54 +501,11 @@ public class QuickPki {
     }
 
     private X500Name buildX500Name(SubjectName info) {
-        return buildX500Name(info, CertificateProfile.DEFAULT);
+        return Csr.x500Name(info, CertificateProfile.DEFAULT);
     }
 
     private X500Name buildX500Name(SubjectName info, CertificateProfile profile) {
-        X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
-        if (profile == CertificateProfile.BRCAC) {
-            addOpenFinanceTransportRdns(builder, info);
-            return builder.build();
-        }
-        if (profile == CertificateProfile.BRSEAL) {
-            addOpenFinanceSigningRdns(builder, info);
-            return builder.build();
-        }
-        builder.addRDN(BCStyle.CN, info.getCommonName());
-        if(info.getCountry() != null) {
-            builder.addRDN(BCStyle.C, info.getCountry());
-        }
-        if(info.getOrganization() != null) {
-            builder.addRDN(BCStyle.O, info.getOrganization());
-        }
-        for (String organizationUnit : info.getOrganizationUnits()) {
-            builder.addRDN(BCStyle.OU, organizationUnit);
-        }
-        if(info.getDnQualifier() != null) {
-            builder.addRDN(BCStyle.DN_QUALIFIER, info.getDnQualifier());
-        }
-        if(info.getLocality() != null) {
-            builder.addRDN(BCStyle.L, info.getLocality());
-        }
-        if(info.getStateOrProvince() != null) {
-            builder.addRDN(BCStyle.ST, info.getStateOrProvince());
-        }
-        if(info.getOrganizationIdentifier() != null) {
-            builder.addRDN(BCStyle.ORGANIZATION_IDENTIFIER, info.getOrganizationIdentifier());
-        }
-        if(info.getBusinessCategory() != null) {
-            builder.addRDN(BCStyle.BUSINESS_CATEGORY, info.getBusinessCategory());
-        }
-        if(info.getJurisdictionCountry() != null) {
-            builder.addRDN(JURISDICTION_COUNTRY_NAME, info.getJurisdictionCountry());
-        }
-        if(info.getSerialNumber() != null) {
-            builder.addRDN(BCStyle.SERIALNUMBER, info.getSerialNumber());
-        }
-        if(info.getUserId() != null) {
-            builder.addRDN(BCStyle.UID, info.getUserId());
-        }
-        return builder.build();
+        return Csr.x500Name(info, profile);
     }
 
     private void validateProfileCompliance(CertInfo info, PublicKey publicKey) {
@@ -666,31 +622,4 @@ public class QuickPki {
         }
     }
 
-    private void addOpenFinanceTransportRdns(X500NameBuilder builder, SubjectName info) {
-        builder.addRDN(BCStyle.BUSINESS_CATEGORY, info.getBusinessCategory());
-        builder.addRDN(JURISDICTION_COUNTRY_NAME, info.getJurisdictionCountry());
-        builder.addRDN(BCStyle.SERIALNUMBER, info.getSerialNumber());
-        builder.addRDN(BCStyle.C, info.getCountry());
-        builder.addRDN(BCStyle.O, info.getOrganization());
-        builder.addRDN(BCStyle.ST, info.getStateOrProvince());
-        builder.addRDN(BCStyle.L, info.getLocality());
-        builder.addRDN(BCStyle.ORGANIZATION_IDENTIFIER, info.getOrganizationIdentifier());
-        builder.addRDN(BCStyle.UID, info.getUserId());
-        builder.addRDN(BCStyle.CN, info.getCommonName());
-    }
-
-    private void addOpenFinanceSigningRdns(X500NameBuilder builder, SubjectName info) {
-        builder.addRDN(BCStyle.UID, info.getUserId());
-        builder.addRDN(BCStyle.C, info.getCountry());
-        builder.addRDN(BCStyle.O, info.getOrganization());
-        for (String organizationUnit : info.getOrganizationUnits()) {
-            builder.addRDN(BCStyle.OU, organizationUnit);
-        }
-        builder.addRDN(BCStyle.CN, info.getCommonName());
-    }
-
-    // jurisdictionCountryName, the EV-style jurisdiction-of-incorporation
-    // country. BCStyle has no constant for it, so we name the OID directly.
-    private static final ASN1ObjectIdentifier JURISDICTION_COUNTRY_NAME =
-            new ASN1ObjectIdentifier("1.3.6.1.4.1.311.60.2.1.3");
 }

@@ -87,6 +87,8 @@ final class CertApiServer {
     private void routes(JavalinDefaultRoutingApi routes) {
         routes.post("/v1/certificates", this::issueCertificate);
         routes.get("/v1/certificates/{id}", this::getCertificate);
+        routes.post("/v1/openssl-configs/brcac", this::brcacOpensslConfig);
+        routes.post("/v1/openssl-configs/brseal", this::brsealOpensslConfig);
         routes.get("/issuer/root.pem", ctx -> ctx.contentType("application/pem-certificate-chain")
                 .result(caService.issuerPem()));
         routes.get("/healthz", this::liveness);
@@ -179,8 +181,24 @@ final class CertApiServer {
         CertificateRequest request = parseRequest(ctx);
         PKCS10CertificationRequest csr = Csrs.parse(request.csr());
         CertificateProfile profile = resolveProfile(request.profile());
-        CertificateAuthorityService.Issued issued = caService.issue(csr, profile);
+        persistAndRespond(ctx, caService.issue(csr, profile));
+    }
 
+    private void brcacOpensslConfig(Context ctx) {
+        BrcacOpensslConfigRequest request = parseBody(ctx, BrcacOpensslConfigRequest.class,
+                "a JSON body with the BRCAC subject attributes");
+        String config = OpensslConfigs.forBrcac(request);
+        ctx.json(new OpensslConfigResponse("brcac.cnf", base64(config)));
+    }
+
+    private void brsealOpensslConfig(Context ctx) {
+        BrsealOpensslConfigRequest request = parseBody(ctx, BrsealOpensslConfigRequest.class,
+                "a JSON body with the BRSEAL subject attributes");
+        String config = OpensslConfigs.forBrseal(request);
+        ctx.json(new OpensslConfigResponse("brseal.cnf", base64(config)));
+    }
+
+    private void persistAndRespond(Context ctx, CertificateAuthorityService.Issued issued) {
         X509Certificate certificate = issued.certificate();
         UUID id = UUID.randomUUID();
         String clientId = ctx.attribute("clientId");
@@ -190,6 +208,7 @@ final class CertApiServer {
                 certificate.getSubjectX500Principal().getName(),
                 issued.certificatePem(),
                 issued.chainPem(),
+                issued.csrPem(),
                 certificate.getNotBefore().toInstant(),
                 certificate.getNotAfter().toInstant(),
                 clientId,
@@ -219,6 +238,9 @@ final class CertApiServer {
         json.put("subject", certificate.subjectDn());
         json.put("certificate", base64(certificate.certificatePem()));
         json.put("chain", base64(certificate.chainPem()));
+        if (certificate.csrPem() != null) {
+            json.put("csr", base64(certificate.csrPem()));
+        }
         json.put("notBefore", certificate.notBefore().toString());
         json.put("notAfter", certificate.notAfter().toString());
         json.put("issuedAt", certificate.createdAt().toString());
@@ -240,8 +262,13 @@ final class CertApiServer {
     }
 
     private CertificateRequest parseRequest(Context ctx) {
+        return parseBody(ctx, CertificateRequest.class,
+                "a JSON object with a base64-encoded 'csr' field");
+    }
+
+    private <T> T parseBody(Context ctx, Class<T> type, String shape) {
         try {
-            CertificateRequest request = Json.MAPPER.readValue(ctx.body(), CertificateRequest.class);
+            T request = Json.MAPPER.readValue(ctx.body(), type);
             if (request == null) {
                 throw new CertApiException(400, "invalid_request", "a JSON request body is required");
             }
@@ -250,9 +277,10 @@ final class CertApiServer {
             throw e;
         } catch (Exception e) {
             throw new CertApiException(400, "invalid_request",
-                    "request body must be a JSON object with a base64-encoded 'csr' field");
+                    "request body must be " + shape);
         }
     }
+
 
     private UUID uuid(String value) {
         try {

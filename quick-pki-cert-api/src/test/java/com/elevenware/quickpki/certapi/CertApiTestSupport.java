@@ -116,6 +116,7 @@ final class CertApiTestSupport {
                         subject_dn varchar(1024) not null,
                         certificate_pem text not null,
                         chain_pem text not null,
+                        csr_pem text,
                         not_before timestamp with time zone not null,
                         not_after timestamp with time zone not null,
                         client_id varchar(256),

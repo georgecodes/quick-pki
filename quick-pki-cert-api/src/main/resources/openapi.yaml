@@ -21,6 +21,8 @@ servers:
 tags:
   - name: Certificates
     description: Issue and retrieve certificates
+  - name: OpenSSL configs
+    description: Generate openssl req configs for the Open Finance Brasil certificate profiles
   - name: Public
     description: Unauthenticated endpoints
 
@@ -55,6 +57,82 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IssuedCertificate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/openssl-configs/brcac:
+    post:
+      tags: [OpenSSL configs]
+      summary: Generate an openssl req config for an Open Finance Brasil BRCAC CSR
+      description: |
+        Returns an openssl `req` config that bakes in the BRCAC subject DN
+        (in the spec-mandated RDN order) and the requested DNS SANs. The
+        caller saves the config to disk and produces a compliant CSR locally
+        with their own private key:
+
+        ```
+        openssl req -new -config brcac.cnf -key my-key.pem -out my-csr.pem
+        ```
+
+        The resulting CSR can then be submitted to `POST /v1/certificates`
+        with `profile=BRCAC` for issuance.
+      operationId: generateBrcacOpensslConfig
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrcacOpensslConfigRequest'
+      responses:
+        '200':
+          description: openssl config generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpensslConfigResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/openssl-configs/brseal:
+    post:
+      tags: [OpenSSL configs]
+      summary: Generate an openssl req config for an Open Finance Brasil BRSEAL CSR
+      description: |
+        BRSEAL counterpart to `/v1/openssl-configs/brcac`. Returns an openssl
+        `req` config with the BRSEAL subject DN, three organizationalUnit
+        RDNs, and the four required ICP-Brasil otherName SAN entries. The
+        resulting CSR can be submitted to `POST /v1/certificates` with
+        `profile=BRSEAL` for issuance.
+      operationId: generateBrsealOpensslConfig
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrsealOpensslConfigRequest'
+      responses:
+        '200':
+          description: openssl config generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpensslConfigResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -214,6 +292,135 @@ components:
             Omitted or `DEFAULT` issues a general-purpose TLS leaf.
           example: BRCAC
 
+    BrcacOpensslConfigRequest:
+      type: object
+      required:
+        - commonName
+        - businessCategory
+        - serialNumber
+        - organization
+        - stateOrProvince
+        - locality
+        - organizationIdentifier
+        - userId
+        - dnsNames
+      properties:
+        commonName:
+          type: string
+          description: Subject commonName; typically the transport hostname.
+          example: transport.example.com
+        businessCategory:
+          type: string
+          description: EV businessCategory.
+          enum:
+            - Private Organization
+            - Government Entity
+            - Business Entity
+            - Non-Commercial Entity
+        serialNumber:
+          type: string
+          description: Subject serialNumber RDN; carries the company CNPJ.
+          example: "12345678000199"
+        organization:
+          type: string
+          example: Example Participant Ltda
+        stateOrProvince:
+          type: string
+          example: SP
+        locality:
+          type: string
+          example: Sao Paulo
+        organizationIdentifier:
+          type: string
+          description: Participant code, prefixed with `OFBBR-`.
+          example: OFBBR-12345678
+        userId:
+          type: string
+          description: Software-statement identifier carried as the UID RDN.
+        country:
+          type: string
+          default: BR
+          description: Subject country; defaults to `BR`.
+        jurisdictionCountry:
+          type: string
+          default: BR
+          description: Jurisdiction-of-incorporation country; defaults to `BR`.
+        dnsNames:
+          type: array
+          items:
+            type: string
+          description: DNS subjectAltName entries; at least one is required.
+          example:
+            - transport.example.com
+
+    BrsealOpensslConfigRequest:
+      type: object
+      required:
+        - commonName
+        - userId
+        - organizationUnits
+        - responsiblePersonName
+        - companyCnpj
+        - responsiblePersonData
+        - companyCei
+      properties:
+        commonName:
+          type: string
+          example: Seal Co
+        userId:
+          type: string
+          description: UID RDN; participant code prefixed with `OFBBR-`.
+          example: OFBBR-12345678
+        country:
+          type: string
+          default: BR
+        organization:
+          type: string
+          default: ICP-Brasil
+        organizationUnits:
+          type: array
+          items:
+            type: string
+          description: Three organizationUnit RDNs (CA short name, CNPJ, validation method).
+          example:
+            - Example CA
+            - "12345678000199"
+            - Validacao por certificado digital
+        responsiblePersonName:
+          type: string
+          description: ICP-Brasil otherName `2.16.76.1.3.2`.
+        companyCnpj:
+          type: string
+          description: ICP-Brasil otherName `2.16.76.1.3.3`.
+          example: "12345678000199"
+        responsiblePersonData:
+          type: string
+          description: ICP-Brasil otherName `2.16.76.1.3.4` (21-char composite).
+          example: "197001010000000000000"
+        companyCei:
+          type: string
+          description: ICP-Brasil otherName `2.16.76.1.3.7`.
+          example: "123456789012"
+
+    OpensslConfigResponse:
+      type: object
+      required: [filename, config]
+      properties:
+        filename:
+          type: string
+          description: |
+            Suggested filename for saving the config; `brcac.cnf` for the
+            BRCAC endpoint, `brseal.cnf` for the BRSEAL endpoint.
+          example: brcac.cnf
+        config:
+          type: string
+          format: byte
+          description: |
+            The generated openssl `req` config, base64-encoded. Decode and
+            save to disk, then run
+            `openssl req -new -config <file>.cnf -key <your-key>.pem -out csr.pem`
+            to produce the CSR.
+
     IssuedCertificate:
       type: object
       properties:
@@ -237,6 +444,14 @@ components:
           type: string
           format: byte
           description: The certificate chain, leaf-first, as base64-encoded PEM.
+        csr:
+          type: string
+          format: byte
+          description: |
+            The PKCS#10 the certificate was issued from, as base64-encoded
+            PEM — exactly what the caller submitted to `/v1/certificates`.
+            Persisted for audit. Omitted only for certificates persisted
+            before this field existed.
         notBefore:
           type: string
           format: date-time
