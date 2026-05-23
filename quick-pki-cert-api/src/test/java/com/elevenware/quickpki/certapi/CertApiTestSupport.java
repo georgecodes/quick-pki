@@ -1,6 +1,11 @@
 package com.elevenware.quickpki.certapi;
 
+import com.elevenware.quickpki.CertInfo;
 import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.ExtensionsGenerator;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
@@ -59,6 +64,36 @@ final class CertApiTestSupport {
         ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
         PKCS10CertificationRequest csr = builder.build(signer);
         return Base64.getEncoder().encodeToString(csr.getEncoded());
+    }
+
+    static String base64BrsealCsr(String commonName) throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+        JcaPKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(
+                new X500Name("UID=OFBBR-12345678,C=BR,O=ICP-Brasil,"
+                        + "OU=Example CA,OU=12345678000199,"
+                        + "OU=Validacao por certificado digital,CN=" + commonName),
+                keyPair.getPublic());
+        ExtensionsGenerator extGen = new ExtensionsGenerator();
+        extGen.addExtension(Extension.subjectAlternativeName, false,
+                new GeneralNames(new GeneralName[] {
+                        otherName("2.16.76.1.3.2", "Responsible Person"),
+                        otherName("2.16.76.1.3.3", "12345678000199"),
+                        otherName("2.16.76.1.3.4", "197001010000000000000"),
+                        otherName("2.16.76.1.3.7", "123456789012")
+                }));
+        builder.addAttribute(
+                org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.pkcs_9_at_extensionRequest,
+                extGen.generate());
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
+        PKCS10CertificationRequest csr = builder.build(signer);
+        return Base64.getEncoder().encodeToString(csr.getEncoded());
+    }
+
+    private static GeneralName otherName(String oid, String value) {
+        return CertInfo.builder().otherName(oid, value).build()
+                .getOtherSubjectAlternativeNames().get(0);
     }
 
     private static void createSchema(Connection connection) throws SQLException {

@@ -1,5 +1,7 @@
 package com.elevenware.quickpki;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 public final class SubjectName {
@@ -7,7 +9,7 @@ public final class SubjectName {
     private final String commonName;
     private final String country;
     private final String organization;
-    private final String organizationUnit;
+    private final List<String> organizationUnits;
     private final String dnQualifier;
     private final String locality;
     private final String stateOrProvince;
@@ -21,7 +23,7 @@ public final class SubjectName {
         this.commonName = builder.commonName;
         this.country = builder.country;
         this.organization = builder.organization;
-        this.organizationUnit = builder.organizationUnit;
+        this.organizationUnits = List.copyOf(builder.organizationUnits);
         this.dnQualifier = builder.dnQualifier;
         this.locality = builder.locality;
         this.stateOrProvince = builder.stateOrProvince;
@@ -49,7 +51,11 @@ public final class SubjectName {
     }
 
     public String getOrganizationUnit() {
-        return organizationUnit;
+        return organizationUnits.isEmpty() ? null : organizationUnits.get(0);
+    }
+
+    public List<String> getOrganizationUnits() {
+        return organizationUnits;
     }
 
     public String getDnQualifier() {
@@ -101,7 +107,7 @@ public final class SubjectName {
         return Objects.equals(commonName, that.commonName)
                 && Objects.equals(country, that.country)
                 && Objects.equals(organization, that.organization)
-                && Objects.equals(organizationUnit, that.organizationUnit)
+                && Objects.equals(organizationUnits, that.organizationUnits)
                 && Objects.equals(dnQualifier, that.dnQualifier)
                 && Objects.equals(locality, that.locality)
                 && Objects.equals(stateOrProvince, that.stateOrProvince)
@@ -114,7 +120,7 @@ public final class SubjectName {
 
     @Override
     public int hashCode() {
-        return Objects.hash(commonName, country, organization, organizationUnit,
+        return Objects.hash(commonName, country, organization, organizationUnits,
                 dnQualifier, locality, stateOrProvince, organizationIdentifier,
                 businessCategory, jurisdictionCountry, serialNumber, userId);
     }
@@ -125,7 +131,7 @@ public final class SubjectName {
                 + "commonName=" + commonName
                 + ", country=" + country
                 + ", organization=" + organization
-                + ", organizationUnit=" + organizationUnit
+                + ", organizationUnits=" + organizationUnits
                 + ", dnQualifier=" + dnQualifier
                 + ", locality=" + locality
                 + ", stateOrProvince=" + stateOrProvince
@@ -141,7 +147,7 @@ public final class SubjectName {
         private String commonName;
         private String country;
         private String organization;
-        private String organizationUnit;
+        private final List<String> organizationUnits = new ArrayList<>();
         private String dnQualifier;
         private String locality;
         private String stateOrProvince;
@@ -170,7 +176,16 @@ public final class SubjectName {
         }
 
         public Builder organizationUnit(String organizationUnit) {
-            this.organizationUnit = organizationUnit;
+            this.organizationUnits.clear();
+            if (organizationUnit != null) {
+                this.organizationUnits.add(organizationUnit);
+            }
+            return this;
+        }
+
+        public Builder addOrganizationUnit(String organizationUnit) {
+            this.organizationUnits.add(Objects.requireNonNull(organizationUnit,
+                    "organizationUnit must not be null"));
             return this;
         }
 
