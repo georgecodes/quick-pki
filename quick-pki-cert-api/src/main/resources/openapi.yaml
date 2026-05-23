@@ -23,8 +23,8 @@ tags:
     description: Issue and retrieve certificates
   - name: OpenSSL configs
     description: |
-      Generate openssl req configs for the Open Finance Brasil and EU eIDAS /
-      PSD2 qualified certificate profiles
+      Generate openssl req configs for the Open Finance Brasil, EU eIDAS /
+      PSD2 qualified, and Sesame Open Source certificate profiles
   - name: Public
     description: Unauthenticated endpoints
 
@@ -215,6 +215,79 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /v1/openssl-configs/os-transport:
+    post:
+      tags: [OpenSSL configs]
+      summary: Generate an openssl req config for a Sesame OS_TRANSPORT CSR
+      description: |
+        Returns an openssl `req` config that bakes in the Sesame OS_TRANSPORT
+        subject DN (C, O, OU, CN), the requested DNS and URI subjectAltName
+        entries (participant and software-statement URNs), and the Sesame
+        transport policy OID (`1.3.6.1.4.1.19273.1.1`). The resulting CSR
+        can be submitted to `POST /v1/certificates` with
+        `profile=OS_TRANSPORT` for issuance.
+      operationId: generateOsTransportOpensslConfig
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OsTransportOpensslConfigRequest'
+      responses:
+        '200':
+          description: openssl config generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpensslConfigResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/openssl-configs/os-signing:
+    post:
+      tags: [OpenSSL configs]
+      summary: Generate an openssl req config for a Sesame OS_SIGNING CSR
+      description: |
+        OS_SIGNING counterpart to `/v1/openssl-configs/os-transport`. Returns
+        an openssl `req` config with the OS_SIGNING subject DN, the
+        participant and software-statement URI SAN entries, the
+        ecosystem-specific signing EKU OID supplied in
+        `extendedKeyUsageOid`, and the Sesame signing policy OID
+        (`1.3.6.1.4.1.19273.1.2`). The resulting CSR can be submitted to
+        `POST /v1/certificates` with `profile=OS_SIGNING` for issuance.
+      operationId: generateOsSigningOpensslConfig
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OsSigningOpensslConfigRequest'
+      responses:
+        '200':
+          description: openssl config generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpensslConfigResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /v1/certificates/{id}:
     get:
       tags: [Certificates]
@@ -352,7 +425,7 @@ components:
           example: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURSBSRVFVRVNULS0tLS0K
         profile:
           type: string
-          enum: [DEFAULT, TLS_SERVER, TLS_CLIENT, BRCAC, BRSEAL, QWAC, QSEAL]
+          enum: [DEFAULT, TLS_SERVER, TLS_CLIENT, BRCAC, BRSEAL, QWAC, QSEAL, OS_TRANSPORT, OS_SIGNING]
           default: DEFAULT
           description: |
             The certificate profile to issue under. The profile fixes the
@@ -361,10 +434,12 @@ components:
             `QWAC` and `QSEAL` are the EU eIDAS / PSD2 Qualified Web
             Authentication and Qualified Electronic Seal profiles
             (ETSI EN 319 412-2/-3, ETSI TS 119 495 for the PSD2 attribute
-            set). For any non-DEFAULT profile the CSR subject, subjectAltName
-            extension, and -- for `QWAC` / `QSEAL` -- the requested
-            qCStatements extension must carry the attributes the profile
-            requires; non-compliant CSRs are rejected with `bad_csr`.
+            set); `OS_TRANSPORT` and `OS_SIGNING` are the Sesame Open Source
+            transport and signing profiles. For any non-DEFAULT profile the
+            CSR subject, subjectAltName extension, and -- where the profile
+            mandates them -- the requested qCStatements or
+            certificatePolicies extensions must carry the attributes the
+            profile requires; non-compliant CSRs are rejected with `bad_csr`.
             Omitted or `DEFAULT` issues a general-purpose TLS leaf.
           example: BRCAC
 
@@ -598,6 +673,110 @@ components:
             that the private key is held on a Qualified Signature/Seal
             Creation Device.
 
+    OsTransportOpensslConfigRequest:
+      type: object
+      required:
+        - commonName
+        - country
+        - organization
+        - dnsNames
+        - uris
+      properties:
+        commonName:
+          type: string
+          description: Subject commonName; typically the transport hostname.
+          example: transport.example.org
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: Two-letter ISO 3166-1 country code.
+          example: GB
+        organization:
+          type: string
+          example: Example Organisation Ltd
+        organizationUnits:
+          type: array
+          items:
+            type: string
+          description: Optional organizationUnit RDNs.
+          example:
+            - Example Software Product
+        dnsNames:
+          type: array
+          items:
+            type: string
+          description: DNS subjectAltName entries; at least one is required.
+          example:
+            - transport.example.org
+        uris:
+          type: array
+          items:
+            type: string
+          description: |
+            URI subjectAltName entries; at least one is required. Typically
+            the participant URN and software-statement URN.
+          example:
+            - urn:odtf:finance:gb:fca:participant:123456
+            - urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d
+        certificatePolicies:
+          type: array
+          items:
+            type: string
+          description: |
+            Optional additional policy OIDs to emit alongside the Sesame
+            transport policy (`1.3.6.1.4.1.19273.1.1`).
+
+    OsSigningOpensslConfigRequest:
+      type: object
+      required:
+        - commonName
+        - country
+        - organization
+        - uris
+        - extendedKeyUsageOid
+      properties:
+        commonName:
+          type: string
+          description: Subject commonName.
+          example: signing.example.org
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          example: GB
+        organization:
+          type: string
+          example: Example Organisation Ltd
+        organizationUnits:
+          type: array
+          items:
+            type: string
+          example:
+            - Example Software Product
+        uris:
+          type: array
+          items:
+            type: string
+          description: URI subjectAltName entries; at least one is required.
+          example:
+            - urn:odtf:finance:gb:fca:participant:123456
+            - urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d
+        extendedKeyUsageOid:
+          type: string
+          description: |
+            The ecosystem-specific signing EKU OID. OS_SIGNING certificates
+            carry no standard RFC 5280 EKU purpose; the caller must supply
+            the OID their ecosystem mandates.
+          example: 1.3.6.1.4.1.55555.2.1
+        certificatePolicies:
+          type: array
+          items:
+            type: string
+          description: |
+            Optional additional policy OIDs to emit alongside the Sesame
+            signing policy (`1.3.6.1.4.1.19273.1.2`).
+
     PdsLocation:
       type: object
       required: [url, language]
@@ -620,8 +799,10 @@ components:
         filename:
           type: string
           description: |
-            Suggested filename for saving the config; `brcac.cnf` for the
-            BRCAC endpoint, `brseal.cnf` for the BRSEAL endpoint.
+            Suggested filename for saving the config; `brcac.cnf` /
+            `brseal.cnf` for the Open Finance Brasil endpoints, `qwac.cnf` /
+            `qseal.cnf` for the EU qualified endpoints, `os-transport.cnf` /
+            `os-signing.cnf` for the Sesame Open Source endpoints.
           example: brcac.cnf
         config:
           type: string

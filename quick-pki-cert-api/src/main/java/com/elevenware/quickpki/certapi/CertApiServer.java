@@ -91,6 +91,8 @@ final class CertApiServer {
         routes.post("/v1/openssl-configs/brseal", this::brsealOpensslConfig);
         routes.post("/v1/openssl-configs/qwac", this::qwacOpensslConfig);
         routes.post("/v1/openssl-configs/qseal", this::qsealOpensslConfig);
+        routes.post("/v1/openssl-configs/os-transport", this::osTransportOpensslConfig);
+        routes.post("/v1/openssl-configs/os-signing", this::osSigningOpensslConfig);
         routes.get("/issuer/root.pem", ctx -> ctx.contentType("application/pem-certificate-chain")
                 .result(caService.issuerPem()));
         routes.get("/healthz", this::liveness);
@@ -212,6 +214,20 @@ final class CertApiServer {
                 "a JSON body with the QSEAL subject attributes");
         String config = OpensslConfigs.forQseal(request);
         ctx.json(new OpensslConfigResponse("qseal.cnf", base64(config)));
+    }
+
+    private void osTransportOpensslConfig(Context ctx) {
+        OsTransportOpensslConfigRequest request = parseBody(ctx, OsTransportOpensslConfigRequest.class,
+                "a JSON body with the OS_TRANSPORT subject attributes");
+        String config = OpensslConfigs.forOsTransport(request);
+        ctx.json(new OpensslConfigResponse("os-transport.cnf", base64(config)));
+    }
+
+    private void osSigningOpensslConfig(Context ctx) {
+        OsSigningOpensslConfigRequest request = parseBody(ctx, OsSigningOpensslConfigRequest.class,
+                "a JSON body with the OS_SIGNING subject attributes");
+        String config = OpensslConfigs.forOsSigning(request);
+        ctx.json(new OpensslConfigResponse("os-signing.cnf", base64(config)));
     }
 
     private void persistAndRespond(Context ctx, CertificateAuthorityService.Issued issued) {

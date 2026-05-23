@@ -376,6 +376,94 @@ public class CsrBuilderTests {
     }
 
     @Test
+    void sesameOsTransportBuilderCsrCanBeIssuedAsTransportCertificate() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair keys = generateRsaKeyPair();
+
+        PKCS10CertificationRequest csr = Sesame.osTransport()
+                .country("GB")
+                .organization("Example Organisation Ltd")
+                .organizationUnit("Example Software Product")
+                .commonName("transport.example.org")
+                .dnsName("transport.example.org")
+                .uri("urn:odtf:finance:gb:fca:participant:123456")
+                .uri("urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d")
+                .buildCsr(keys);
+
+        assertDoesNotThrow(() -> Csr.verifySignature(csr));
+        assertEquals(List.of("transport.example.org"), Csr.dnsSubjectAlternativeNames(csr));
+        assertEquals(List.of("urn:odtf:finance:gb:fca:participant:123456",
+                        "urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d"),
+                Csr.uriSubjectAlternativeNames(csr));
+        assertEquals(List.of(Sesame.OID_OS_TRANSPORT_POLICY), Csr.certificatePolicies(csr));
+
+        CertificateBundle bundle = pki.issueCertificate(csr,
+                CertInfo.fromCsr(csr).profile(CertificateProfile.OS_TRANSPORT).build());
+        List<String> eku = bundle.getCertificate().getExtendedKeyUsage();
+        assertNotNull(eku);
+        assertTrue(eku.contains("1.3.6.1.5.5.7.3.2"), "OS_TRANSPORT EKU must include clientAuth");
+    }
+
+    @Test
+    void sesameOsSigningBuilderCsrCanBeIssuedAsSigningCertificate() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair keys = generateRsaKeyPair();
+        String ekuOid = "1.3.6.1.4.1.55555.2.1";
+
+        PKCS10CertificationRequest csr = Sesame.osSigning()
+                .country("GB")
+                .organization("Example Organisation Ltd")
+                .organizationUnit("Example Software Product")
+                .commonName("signing.example.org")
+                .uri("urn:odtf:finance:gb:fca:participant:123456")
+                .uri("urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d")
+                .extendedKeyUsageOid(ekuOid)
+                .buildCsr(keys);
+
+        assertDoesNotThrow(() -> Csr.verifySignature(csr));
+        assertEquals(List.of("urn:odtf:finance:gb:fca:participant:123456",
+                        "urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d"),
+                Csr.uriSubjectAlternativeNames(csr));
+        assertEquals(List.of(Sesame.OID_OS_SIGNING_POLICY), Csr.certificatePolicies(csr));
+
+        CertInfo info = CertInfo.fromCsr(csr)
+                .profile(CertificateProfile.OS_SIGNING)
+                .extendedKeyUsageOid(ekuOid)
+                .build();
+        CertificateBundle bundle = pki.issueCertificate(csr, info);
+        assertEquals(List.of(ekuOid), bundle.getCertificate().getExtendedKeyUsage(),
+                "OS_SIGNING EKU must carry the ecosystem-specific OID");
+    }
+
+    @Test
+    void sesameOsTransportCertInfoFactoryAttachesProfileSubjectAndPolicy() {
+        SubjectName subject = SubjectName.builder()
+                .country("GB").organization("Example Organisation Ltd")
+                .commonName("transport.example.org").build();
+
+        CertInfo info = Sesame.osTransportCertInfo(subject)
+                .dnsName("transport.example.org")
+                .uri("urn:odtf:finance:gb:fca:participant:123456")
+                .build();
+
+        assertEquals(CertificateProfile.OS_TRANSPORT, info.getProfile());
+        assertEquals(subject, info.getSubjectName());
+        assertEquals(List.of(Sesame.OID_OS_TRANSPORT_POLICY), info.getCertificatePolicies());
+    }
+
+    @Test
+    void sesameOsSigningCertInfoFactoryAttachesProfileSubjectAndPolicy() {
+        SubjectName subject = SubjectName.builder()
+                .country("GB").organization("Example Organisation Ltd")
+                .commonName("signing.example.org").build();
+
+        CertInfo info = Sesame.osSigningCertInfo(subject).build();
+
+        assertEquals(CertificateProfile.OS_SIGNING, info.getProfile());
+        assertEquals(List.of(Sesame.OID_OS_SIGNING_POLICY), info.getCertificatePolicies());
+    }
+
+    @Test
     void brcacBuilderCsrPemEncodesAsCertificateRequest() throws Exception {
         KeyPair keys = generateRsaKeyPair();
         String pem = OpenFinanceBrasil.brcac()

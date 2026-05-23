@@ -2,6 +2,7 @@ package com.elevenware.quickpki;
 
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1Sequence;
+import org.bouncycastle.asn1.DERIA5String;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.BasicConstraints;
@@ -159,29 +160,38 @@ public class QuickPki {
         return new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment);
     }
 
-    // Resolves the leaf ExtendedKeyUsage. Precedence: explicit CertInfo
-    // purposes win; otherwise the selected profile's purposes; otherwise
-    // default to serverAuth + clientAuth. Returns null when no EKU extension
-    // should be emitted at all - the profile can request this with an empty
-    // purpose set (eg. CertificateProfile.BRSEAL).
+    // Resolves the leaf ExtendedKeyUsage. Precedence: any explicit CertInfo
+    // input (standard purposes OR custom OIDs) wins, in which case the
+    // resolved EKU is the union of both; otherwise the selected profile's
+    // purposes; otherwise default to serverAuth + clientAuth. Returns null
+    // when no EKU extension should be emitted at all - the profile can
+    // request this with an empty purpose set (eg. CertificateProfile.BRSEAL).
     private ExtendedKeyUsage leafEkuFor(CertInfo info) {
         Set<ExtendedKeyUsageId> eku = info.getExtendedKeyUsages();
-        if (eku == null) {
+        List<String> customOids = info.getExtendedKeyUsageOids();
+        boolean callerOverrode = eku != null || !customOids.isEmpty();
+        if (!callerOverrode) {
             eku = info.getProfile().extendedKeyUsages();
         }
+        List<KeyPurposeId> purposes = new ArrayList<>();
         if (eku != null) {
-            if (eku.isEmpty()) {
+            for (ExtendedKeyUsageId id : eku) {
+                purposes.add(id.keyPurposeId());
+            }
+        }
+        for (String oid : customOids) {
+            purposes.add(KeyPurposeId.getInstance(new ASN1ObjectIdentifier(oid)));
+        }
+        if (purposes.isEmpty()) {
+            if (callerOverrode || (eku != null && eku.isEmpty())) {
                 return null;
             }
-            KeyPurposeId[] purposes = eku.stream()
-                    .map(ExtendedKeyUsageId::keyPurposeId)
-                    .toArray(KeyPurposeId[]::new);
-            return new ExtendedKeyUsage(purposes);
+            return new ExtendedKeyUsage(new KeyPurposeId[] {
+                    KeyPurposeId.id_kp_serverAuth,
+                    KeyPurposeId.id_kp_clientAuth
+            });
         }
-        return new ExtendedKeyUsage(new KeyPurposeId[] {
-                KeyPurposeId.id_kp_serverAuth,
-                KeyPurposeId.id_kp_clientAuth
-        });
+        return new ExtendedKeyUsage(purposes.toArray(new KeyPurposeId[0]));
     }
 
 
@@ -392,9 +402,10 @@ public class QuickPki {
     // wrapped as a new QuickPki that can itself issue further certificates.
     // The intermediate inherits this PKI's algorithm and signature settings.
     public QuickPki issueIntermediate(CertInfo info) {
-        if (!info.getDnsNames().isEmpty() || !info.getIpAddresses().isEmpty()) {
+        if (!info.getDnsNames().isEmpty() || !info.getIpAddresses().isEmpty()
+                || !info.getUris().isEmpty()) {
             throw new IllegalArgumentException(
-                    "Subject Alternative Names (dnsName/ipAddress) are not supported on "
+                    "Subject Alternative Names (dnsName/ipAddress/uri) are not supported on "
                             + "intermediate CA certificates; put them on the end-entity cert instead");
         }
         try {
@@ -483,6 +494,10 @@ public class QuickPki {
             certificateBuilder.addExtension(Extension.qCStatements, false,
                     Csr.encodeQcStatements(info.getQcStatements()));
         }
+        if (!info.getCertificatePolicies().isEmpty()) {
+            certificateBuilder.addExtension(Extension.certificatePolicies, false,
+                    Csr.encodeCertificatePolicies(info.getCertificatePolicies()));
+        }
 
         X509CertificateHolder rootCertHolder = certificateBuilder.build(rootCertContentSigner);
         X509Certificate cert = new JcaX509CertificateConverter().setProvider(provider).getCertificate(rootCertHolder);
@@ -496,6 +511,9 @@ public class QuickPki {
         }
         for (String ipAddress : info.getIpAddresses()) {
             names.add(new GeneralName(GeneralName.iPAddress, ipAddress));
+        }
+        for (String uri : info.getUris()) {
+            names.add(new GeneralName(GeneralName.uniformResourceIdentifier, new DERIA5String(uri)));
         }
         names.addAll(info.getOtherSubjectAlternativeNames());
         if (names.isEmpty()) {
@@ -537,6 +555,18 @@ public class QuickPki {
                 validateQwac(info, subjectName);
             } else {
                 validateQseal(info, subjectName);
+            }
+            return;
+        }
+        if (profile == CertificateProfile.OS_TRANSPORT || profile == CertificateProfile.OS_SIGNING) {
+            SubjectName subjectName = info.getSubjectName();
+            if (subjectName == null) {
+                throw new IllegalArgumentException(profile + " certificates require a Sesame subject DN");
+            }
+            if (profile == CertificateProfile.OS_TRANSPORT) {
+                validateOsTransport(info, subjectName);
+            } else {
+                validateOsSigning(info, subjectName);
             }
         }
     }
@@ -712,6 +742,66 @@ public class QuickPki {
             }
         }
         throw new IllegalArgumentException(message);
+    }
+
+    private void validateOsTransport(CertInfo info, SubjectName subjectName) {
+        validateSesameSubject(subjectName, "OS_TRANSPORT");
+        if (info.getDnsNames().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "OS_TRANSPORT certificates require at least one DNS subjectAltName");
+        }
+        if (info.getUris().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "OS_TRANSPORT certificates require at least one URI subjectAltName "
+                            + "(participant / software-statement URN)");
+        }
+        if (!info.getIpAddresses().isEmpty() || !info.getOtherSubjectAlternativeNames().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "OS_TRANSPORT certificates support DNS and URI subjectAltName entries only");
+        }
+        requireCertificatePolicy(info, Sesame.OID_OS_TRANSPORT_POLICY,
+                "OS_TRANSPORT certificates require the Sesame transport policy OID ("
+                        + Sesame.OID_OS_TRANSPORT_POLICY + ") in certificatePolicies");
+    }
+
+    private void validateOsSigning(CertInfo info, SubjectName subjectName) {
+        validateSesameSubject(subjectName, "OS_SIGNING");
+        if (info.getUris().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "OS_SIGNING certificates require at least one URI subjectAltName "
+                            + "(participant / software-statement URN)");
+        }
+        if (!info.getDnsNames().isEmpty() || !info.getIpAddresses().isEmpty()
+                || !info.getOtherSubjectAlternativeNames().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "OS_SIGNING certificates support URI subjectAltName entries only");
+        }
+        requireCertificatePolicy(info, Sesame.OID_OS_SIGNING_POLICY,
+                "OS_SIGNING certificates require the Sesame signing policy OID ("
+                        + Sesame.OID_OS_SIGNING_POLICY + ") in certificatePolicies");
+        if (info.getExtendedKeyUsageOids().isEmpty()
+                && (info.getExtendedKeyUsages() == null || info.getExtendedKeyUsages().isEmpty())) {
+            throw new IllegalArgumentException(
+                    "OS_SIGNING certificates require an ecosystem-specific ExtendedKeyUsage OID "
+                            + "(set one with CertInfo.Builder.extendedKeyUsageOid(...))");
+        }
+    }
+
+    private void validateSesameSubject(SubjectName subjectName, String profileName) {
+        requireNonBlank(subjectName.getCountry(), "country");
+        requireNonBlank(subjectName.getOrganization(), "organization");
+        requireNonBlank(subjectName.getCommonName(), "commonName");
+        if (subjectName.getCountry().length() != 2) {
+            throw new IllegalArgumentException(
+                    profileName + " country must be a two-letter ISO 3166-1 code (got '"
+                            + subjectName.getCountry() + "')");
+        }
+    }
+
+    private void requireCertificatePolicy(CertInfo info, String oid, String message) {
+        if (!info.getCertificatePolicies().contains(oid)) {
+            throw new IllegalArgumentException(message);
+        }
     }
 
     private String otherNameOid(GeneralName name) {

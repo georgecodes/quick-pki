@@ -1,7 +1,9 @@
 package com.elevenware.quickpki.certapi;
 
+import com.elevenware.quickpki.Csr;
 import com.elevenware.quickpki.EuQualified;
 import com.elevenware.quickpki.QcStatement;
+import com.elevenware.quickpki.Sesame;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -332,12 +334,160 @@ final class OpensslConfigs {
 
     private static String encodeQcStatementsAsHex(List<QcStatement> statements) {
         try {
-            byte[] der = com.elevenware.quickpki.Csr.encodeQcStatements(statements).getEncoded();
+            byte[] der = Csr.encodeQcStatements(statements).getEncoded();
             return HexFormat.of().withUpperCase().formatHex(der);
         } catch (IOException e) {
             throw new CertApiException(500, "server_error",
                     "failed to encode qCStatements: " + e.getMessage());
         }
+    }
+
+    static String forOsTransport(OsTransportOpensslConfigRequest request) {
+        requireNonBlank(request.commonName(), "commonName");
+        requireNonBlank(request.country(), "country");
+        if (request.country().length() != 2) {
+            throw new CertApiException(400, "invalid_request",
+                    "'country' must be a two-letter ISO 3166-1 code");
+        }
+        requireNonBlank(request.organization(), "organization");
+        List<String> dnsNames = request.dnsNames() == null ? List.of() : request.dnsNames();
+        if (dnsNames.isEmpty()) {
+            throw new CertApiException(400, "invalid_request",
+                    "OS_TRANSPORT requires at least one entry in 'dnsNames'");
+        }
+        List<String> uris = request.uris() == null ? List.of() : request.uris();
+        if (uris.isEmpty()) {
+            throw new CertApiException(400, "invalid_request",
+                    "OS_TRANSPORT requires at least one entry in 'uris'");
+        }
+
+        Map<String, String> dn = sesameDn(request.country(), request.organization(),
+                request.organizationUnits(), request.commonName());
+
+        List<String> sanLines = new ArrayList<>();
+        int dnsIdx = 1;
+        for (String dnsName : dnsNames) {
+            sanLines.add("DNS." + dnsIdx++ + " = " + dnsName);
+        }
+        int uriIdx = 1;
+        for (String uri : uris) {
+            sanLines.add("URI." + uriIdx++ + " = " + uri);
+        }
+
+        List<String> policies = new ArrayList<>();
+        policies.add(Sesame.OID_OS_TRANSPORT_POLICY);
+        if (request.certificatePolicies() != null) {
+            for (String oid : request.certificatePolicies()) {
+                if (oid != null && !oid.isBlank()) {
+                    policies.add(oid);
+                }
+            }
+        }
+
+        return renderConfig(Map.of(), dn, "ext_os_transport",
+                osTransportExtensions(sanLines, policies));
+    }
+
+    static String forOsSigning(OsSigningOpensslConfigRequest request) {
+        requireNonBlank(request.commonName(), "commonName");
+        requireNonBlank(request.country(), "country");
+        if (request.country().length() != 2) {
+            throw new CertApiException(400, "invalid_request",
+                    "'country' must be a two-letter ISO 3166-1 code");
+        }
+        requireNonBlank(request.organization(), "organization");
+        requireNonBlank(request.extendedKeyUsageOid(), "extendedKeyUsageOid");
+        List<String> uris = request.uris() == null ? List.of() : request.uris();
+        if (uris.isEmpty()) {
+            throw new CertApiException(400, "invalid_request",
+                    "OS_SIGNING requires at least one entry in 'uris'");
+        }
+
+        Map<String, String> dn = sesameDn(request.country(), request.organization(),
+                request.organizationUnits(), request.commonName());
+
+        List<String> sanLines = new ArrayList<>();
+        int uriIdx = 1;
+        for (String uri : uris) {
+            sanLines.add("URI." + uriIdx++ + " = " + uri);
+        }
+
+        List<String> policies = new ArrayList<>();
+        policies.add(Sesame.OID_OS_SIGNING_POLICY);
+        if (request.certificatePolicies() != null) {
+            for (String oid : request.certificatePolicies()) {
+                if (oid != null && !oid.isBlank()) {
+                    policies.add(oid);
+                }
+            }
+        }
+
+        return renderConfig(Map.of(), dn, "ext_os_signing",
+                osSigningExtensions(sanLines, policies, request.extendedKeyUsageOid()));
+    }
+
+    private static Map<String, String> sesameDn(String country, String organization,
+                                                List<String> organizationUnits, String commonName) {
+        // Sesame Open Source RDN order: C, O, OU(s), CN. Matches
+        // Csr.x500Name(... OS_TRANSPORT/OS_SIGNING ...).
+        Map<String, String> dn = new LinkedHashMap<>();
+        dn.put("countryName", country);
+        dn.put("organizationName", organization);
+        if (organizationUnits != null) {
+            int idx = 0;
+            for (String ou : organizationUnits) {
+                if (ou != null && !ou.isBlank()) {
+                    dn.put("0.organizationalUnitName." + idx++, ou);
+                }
+            }
+        }
+        dn.put("commonName", commonName);
+        return dn;
+    }
+
+    private static String osTransportExtensions(List<String> sanLines, List<String> policyOids) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[ext_os_transport]\n");
+        sb.append("keyUsage = critical, digitalSignature\n");
+        sb.append("extendedKeyUsage = clientAuth\n");
+        sb.append("subjectAltName = @san\n");
+        sb.append("certificatePolicies = ").append(joinPolicyIdentifiers(policyOids)).append('\n');
+        sb.append('\n');
+        sb.append("[san]\n");
+        for (String line : sanLines) {
+            sb.append(line).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static String osSigningExtensions(List<String> sanLines, List<String> policyOids,
+                                              String ekuOid) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[ext_os_signing]\n");
+        sb.append("keyUsage = critical, digitalSignature, nonRepudiation\n");
+        sb.append("extendedKeyUsage = ").append(ekuOid).append('\n');
+        sb.append("subjectAltName = @san\n");
+        sb.append("certificatePolicies = ").append(joinPolicyIdentifiers(policyOids)).append('\n');
+        sb.append('\n');
+        sb.append("[san]\n");
+        for (String line : sanLines) {
+            sb.append(line).append('\n');
+        }
+        return sb.toString();
+    }
+
+    // openssl's certificatePolicies syntax accepts a comma-separated list of
+    // policy identifiers; each "@<section>" form supports policy qualifiers
+    // but we only need bare OIDs, which openssl accepts directly.
+    private static String joinPolicyIdentifiers(List<String> policyOids) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < policyOids.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(policyOids.get(i));
+        }
+        return sb.toString();
     }
 
     private static String brsealExtensions(List<String> sanLines) {

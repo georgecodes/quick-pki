@@ -2,6 +2,7 @@ package com.elevenware.quickpki.certapi;
 
 import com.elevenware.quickpki.CertInfo;
 import com.elevenware.quickpki.EuQualified;
+import com.elevenware.quickpki.Sesame;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
@@ -108,6 +109,27 @@ final class CertApiTestSupport {
                 .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
                 .commonName(commonName)
                 .dnsName(commonName)
+                .buildCsr(keyPair);
+        return Base64.getEncoder().encodeToString(csr.getEncoded());
+    }
+
+    /**
+     * Builds a Sesame OS_TRANSPORT compliant CSR via the {@link Sesame}
+     * helper. Used by the cert-api round-trip tests that exercise issuance
+     * under the OS_TRANSPORT profile.
+     */
+    static String base64OsTransportCsr(String commonName) throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+        PKCS10CertificationRequest csr = Sesame.osTransport()
+                .country("GB")
+                .organization("Example Organisation Ltd")
+                .organizationUnit("Example Software Product")
+                .commonName(commonName)
+                .dnsName(commonName)
+                .uri("urn:odtf:finance:gb:fca:participant:123456")
+                .uri("urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d")
                 .buildCsr(keyPair);
         return Base64.getEncoder().encodeToString(csr.getEncoded());
     }
