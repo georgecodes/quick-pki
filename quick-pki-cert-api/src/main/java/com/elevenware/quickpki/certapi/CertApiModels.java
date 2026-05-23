@@ -154,6 +154,44 @@ record PdsLocationRequest(String url, String language) {
 }
 
 /**
+ * Inbound JSON request body for {@code POST /v1/openssl-configs/os-transport}.
+ * The caller supplies the Sesame OS_TRANSPORT subject attributes plus the
+ * participant / software-statement URN SAN entries; the server returns an
+ * openssl {@code req} config that bakes them in along with the standard
+ * Sesame transport policy OID. The resulting CSR can be submitted to
+ * {@code POST /v1/certificates} with {@code profile=OS_TRANSPORT} for
+ * issuance.
+ */
+record OsTransportOpensslConfigRequest(
+        String commonName,
+        String country,
+        String organization,
+        List<String> organizationUnits,
+        List<String> dnsNames,
+        List<String> uris,
+        List<String> certificatePolicies
+) {
+}
+
+/**
+ * Inbound JSON request body for {@code POST /v1/openssl-configs/os-signing}.
+ * Same idea as {@link OsTransportOpensslConfigRequest}, with the OS_SIGNING
+ * subject attributes, URI SAN entries, and an ecosystem-specific signing
+ * EKU OID (the Sesame OS_SIGNING profile has no standard EKU). The Sesame
+ * signing policy OID is added automatically.
+ */
+record OsSigningOpensslConfigRequest(
+        String commonName,
+        String country,
+        String organization,
+        List<String> organizationUnits,
+        List<String> uris,
+        String extendedKeyUsageOid,
+        List<String> certificatePolicies
+) {
+}
+
+/**
  * Response body for {@code POST /v1/openssl-configs/{brcac,brseal}}: the
  * generated openssl {@code req} config, base64-encoded (consistent with how
  * CSRs and certs travel on this API), plus a suggested filename for callers

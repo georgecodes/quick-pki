@@ -435,6 +435,156 @@ class CertApiServerTest {
     }
 
     @Test
+    void generatesAnOsTransportOpensslConfig() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "transport.example.org",
+                  "country": "GB",
+                  "organization": "Example Organisation Ltd",
+                  "organizationUnits": ["Example Software Product"],
+                  "dnsNames": ["transport.example.org"],
+                  "uris": [
+                    "urn:odtf:finance:gb:fca:participant:123456",
+                    "urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d"
+                  ]
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/os-transport", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode jsonBody = Json.MAPPER.readTree(response.body());
+        assertThat(jsonBody.get("filename").asText()).isEqualTo("os-transport.cnf");
+        String config = new String(Base64.getDecoder().decode(jsonBody.get("config").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(config).contains("countryName = GB");
+        assertThat(config).contains("organizationName = Example Organisation Ltd");
+        assertThat(config).contains("commonName = transport.example.org");
+        assertThat(config).contains("DNS.1 = transport.example.org");
+        assertThat(config).contains("URI.1 = urn:odtf:finance:gb:fca:participant:123456");
+        assertThat(config).contains("URI.2 = urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d");
+        assertThat(config).contains("keyUsage = critical, digitalSignature");
+        assertThat(config).contains("extendedKeyUsage = clientAuth");
+        assertThat(config).contains("certificatePolicies = 1.3.6.1.4.1.19273.1.1");
+    }
+
+    @Test
+    void generatesAnOsSigningOpensslConfig() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "signing.example.org",
+                  "country": "GB",
+                  "organization": "Example Organisation Ltd",
+                  "organizationUnits": ["Example Software Product"],
+                  "uris": [
+                    "urn:odtf:finance:gb:fca:participant:123456",
+                    "urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d"
+                  ],
+                  "extendedKeyUsageOid": "1.3.6.1.4.1.55555.2.1"
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/os-signing", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode jsonBody = Json.MAPPER.readTree(response.body());
+        assertThat(jsonBody.get("filename").asText()).isEqualTo("os-signing.cnf");
+        String config = new String(Base64.getDecoder().decode(jsonBody.get("config").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(config).contains("commonName = signing.example.org");
+        assertThat(config).contains("URI.1 = urn:odtf:finance:gb:fca:participant:123456");
+        assertThat(config).contains("keyUsage = critical, digitalSignature, nonRepudiation");
+        assertThat(config).contains("extendedKeyUsage = 1.3.6.1.4.1.55555.2.1");
+        assertThat(config).contains("certificatePolicies = 1.3.6.1.4.1.19273.1.2");
+    }
+
+    @Test
+    void rejectsOsTransportOpensslConfigRequestMissingUris() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "transport.example.org",
+                  "country": "GB",
+                  "organization": "Example Organisation Ltd",
+                  "dnsNames": ["transport.example.org"]
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/os-transport", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(Json.MAPPER.readTree(response.body()).get("error_description").asText())
+                .contains("uris");
+    }
+
+    @Test
+    void rejectsOsSigningOpensslConfigRequestMissingEku() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "signing.example.org",
+                  "country": "GB",
+                  "organization": "Example Organisation Ltd",
+                  "uris": ["urn:odtf:finance:gb:fca:participant:123456"]
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/os-signing", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(Json.MAPPER.readTree(response.body()).get("error_description").asText())
+                .contains("extendedKeyUsageOid");
+    }
+
+    @Test
+    void osTransportAndOsSigningOpensslConfigEndpointsAreAuthenticated() throws Exception {
+        start("certificates:issue");
+
+        HttpResponse<String> osTransport = post("/v1/openssl-configs/os-transport", "expired-token", "{}");
+        assertThat(osTransport.statusCode()).isEqualTo(401);
+
+        HttpResponse<String> osSigning = post("/v1/openssl-configs/os-signing", "expired-token", "{}");
+        assertThat(osSigning.statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void issuesAnOsTransportCertificateFromAnOsTransportCsr() throws Exception {
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64OsTransportCsr("transport.example.org");
+
+        HttpResponse<String> response = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\",\"profile\":\"OS_TRANSPORT\"}");
+
+        assertThat(response.statusCode()).isEqualTo(201);
+        X509Certificate cert = parseCertificate(Json.MAPPER.readTree(response.body()));
+        assertThat(cert.getKeyUsage()[0]).as("digitalSignature").isTrue();
+        assertThat(cert.getExtendedKeyUsage())
+                .as("OS_TRANSPORT EKU includes clientAuth")
+                .contains("1.3.6.1.5.5.7.3.2");
+        // certificatePolicies extension (2.5.29.32) carried through from CSR.
+        assertThat(cert.getExtensionValue("2.5.29.32"))
+                .as("OS_TRANSPORT must carry certificatePolicies")
+                .isNotNull();
+    }
+
+    @Test
+    void rejectsNonCompliantOsTransportCsrAsBadRequest() throws Exception {
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64Csr("transport.example.org");
+
+        HttpResponse<String> response = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\",\"profile\":\"OS_TRANSPORT\"}");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        JsonNode bodyJson = Json.MAPPER.readTree(response.body());
+        assertThat(bodyJson.get("error").asText()).isEqualTo("bad_csr");
+        assertThat(bodyJson.get("error_description").asText().toLowerCase())
+                .containsAnyOf("os_transport", "uri", "dns", "policy");
+    }
+
+    @Test
     void issuedCertificatesEndpointReturnsTheCsrAlongsideTheCert() throws Exception {
         // Round-trip through the existing CSR endpoint: the CSR a caller
         // submitted is now persisted and served back via GET.

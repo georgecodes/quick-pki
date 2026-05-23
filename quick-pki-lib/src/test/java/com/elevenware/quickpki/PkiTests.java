@@ -1920,6 +1920,212 @@ public class PkiTests {
                 .toCertInfo();
     }
 
+    // ----- Sesame OS_TRANSPORT / OS_SIGNING profile coverage -----
+
+    private static final String SESAME_SIGNING_EKU_OID = "1.3.6.1.4.1.55555.2.1";
+
+    @Test
+    void osTransportProfileSetsKeyUsageAndClientAuth() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(osTransportInfo("transport.example.org").build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "OS_TRANSPORT leaf must have a KeyUsage extension");
+        assertTrue(keyUsage[0], "OS_TRANSPORT must assert digitalSignature");
+        assertFalse(keyUsage[2], "OS_TRANSPORT must NOT assert keyEncipherment");
+
+        List<String> eku = bundle.getCertificate().getExtendedKeyUsage();
+        assertNotNull(eku, "OS_TRANSPORT must have an ExtendedKeyUsage extension");
+        assertTrue(eku.contains(KeyPurposeId.id_kp_clientAuth.getId()));
+        assertFalse(eku.contains(KeyPurposeId.id_kp_serverAuth.getId()),
+                "OS_TRANSPORT EKU should not include serverAuth");
+    }
+
+    @Test
+    void osSigningProfileSetsSigningKeyUsageAndEcosystemEku() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(osSigningInfo("signing.example.org").build());
+
+        boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
+        assertNotNull(keyUsage, "OS_SIGNING leaf must have a KeyUsage extension");
+        assertTrue(keyUsage[0], "OS_SIGNING must assert digitalSignature");
+        assertTrue(keyUsage[1], "OS_SIGNING must assert nonRepudiation");
+
+        List<String> eku = bundle.getCertificate().getExtendedKeyUsage();
+        assertNotNull(eku, "OS_SIGNING must carry the ecosystem-specific EKU");
+        assertEquals(List.of(SESAME_SIGNING_EKU_OID), eku);
+    }
+
+    @Test
+    void osTransportCertificateCarriesSesamePolicyAndUriSans() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(osTransportInfo("transport.example.org").build());
+
+        Set<String> policies = certificatePolicyOidsOf(bundle.getCertificate());
+        assertTrue(policies.contains(Sesame.OID_OS_TRANSPORT_POLICY),
+                "OS_TRANSPORT must carry the Sesame transport policy OID, got " + policies);
+
+        Collection<List<?>> sans = bundle.getCertificate().getSubjectAlternativeNames();
+        assertNotNull(sans, "OS_TRANSPORT must carry SAN entries");
+        Set<String> uris = new HashSet<>();
+        Set<String> dnsNames = new HashSet<>();
+        for (List<?> san : sans) {
+            int tag = (Integer) san.get(0);
+            String value = san.get(1).toString();
+            if (tag == GeneralName.uniformResourceIdentifier) {
+                uris.add(value);
+            } else if (tag == GeneralName.dNSName) {
+                dnsNames.add(value);
+            }
+        }
+        assertTrue(uris.contains("urn:odtf:finance:gb:fca:participant:123456"),
+                "expected participant URN, got " + uris);
+        assertTrue(uris.contains("urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d"),
+                "expected software URN, got " + uris);
+        assertTrue(dnsNames.contains("transport.example.org"),
+                "expected transport DNS SAN, got " + dnsNames);
+    }
+
+    @Test
+    void osSigningCertificateCarriesSesameSigningPolicy() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+
+        CertificateBundle bundle = pki.issueCertificate(osSigningInfo("signing.example.org").build());
+
+        Set<String> policies = certificatePolicyOidsOf(bundle.getCertificate());
+        assertTrue(policies.contains(Sesame.OID_OS_SIGNING_POLICY),
+                "OS_SIGNING must carry the Sesame signing policy OID, got " + policies);
+    }
+
+    @Test
+    void osTransportRejectsMissingUriSubjectAltName() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(Sesame.osTransport()
+                        .country("GB")
+                        .organization("Example Organisation Ltd")
+                        .commonName("transport.example.org")
+                        .dnsName("transport.example.org")
+                        .toCertInfo().build()));
+
+        assertTrue(ex.getMessage().toLowerCase().contains("uri"),
+                "message should call out the missing URI SAN, got: " + ex.getMessage());
+    }
+
+    @Test
+    void osTransportRejectsMissingDnsSubjectAltName() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(Sesame.osTransport()
+                        .country("GB")
+                        .organization("Example Organisation Ltd")
+                        .commonName("transport.example.org")
+                        .uri("urn:odtf:finance:gb:fca:participant:123456")
+                        .toCertInfo().build()));
+
+        assertTrue(ex.getMessage().toLowerCase().contains("dns"),
+                "message should call out the missing DNS SAN, got: " + ex.getMessage());
+    }
+
+    @Test
+    void osTransportRejectsMissingSesamePolicy() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(Sesame.osTransport()
+                        .country("GB")
+                        .organization("Example Organisation Ltd")
+                        .commonName("transport.example.org")
+                        .dnsName("transport.example.org")
+                        .uri("urn:odtf:finance:gb:fca:participant:123456")
+                        .omitDefaultPolicy()
+                        .toCertInfo().build()));
+
+        assertTrue(ex.getMessage().contains(Sesame.OID_OS_TRANSPORT_POLICY),
+                "message should reference the missing policy OID, got: " + ex.getMessage());
+    }
+
+    @Test
+    void osSigningRejectsMissingEcosystemEku() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(Sesame.osSigning()
+                        .country("GB")
+                        .organization("Example Organisation Ltd")
+                        .commonName("signing.example.org")
+                        .uri("urn:odtf:finance:gb:fca:participant:123456")
+                        .toCertInfo().build()));
+
+        assertTrue(ex.getMessage().toLowerCase().contains("extendedkeyusage"),
+                "message should call out the missing ecosystem EKU, got: " + ex.getMessage());
+    }
+
+    @Test
+    void osTransportSubjectRdnsFollowSesameOrder() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        X500Name subject = new JcaX509CertificateHolder(
+                pki.issueCertificate(osTransportInfo("transport.example.org").build()).getCertificate())
+                .getSubject();
+
+        org.bouncycastle.asn1.x500.RDN[] rdns = subject.getRDNs();
+        assertEquals(BCStyle.C, rdns[0].getFirst().getType());
+        assertEquals(BCStyle.O, rdns[1].getFirst().getType());
+        assertEquals(BCStyle.OU, rdns[2].getFirst().getType());
+        assertEquals(BCStyle.CN, rdns[3].getFirst().getType());
+    }
+
+    @Test
+    void certificateProfileEnumIncludesSesameProfiles() {
+        assertEquals(CertificateProfile.OS_TRANSPORT, CertificateProfile.fromName("os_transport"));
+        assertEquals(CertificateProfile.OS_SIGNING, CertificateProfile.fromName("OS_SIGNING"));
+    }
+
+    private static CertInfo.Builder osTransportInfo(String commonName) {
+        return Sesame.osTransport()
+                .country("GB")
+                .organization("Example Organisation Ltd")
+                .organizationUnit("Example Software Product")
+                .commonName(commonName)
+                .dnsName(commonName)
+                .uri("urn:odtf:finance:gb:fca:participant:123456")
+                .uri("urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d")
+                .toCertInfo();
+    }
+
+    private static CertInfo.Builder osSigningInfo(String commonName) {
+        return Sesame.osSigning()
+                .country("GB")
+                .organization("Example Organisation Ltd")
+                .organizationUnit("Example Software Product")
+                .commonName(commonName)
+                .uri("urn:odtf:finance:gb:fca:participant:123456")
+                .uri("urn:odtf:finance:gb:fca:software:9f1c2a3b4c5d")
+                .extendedKeyUsageOid(SESAME_SIGNING_EKU_OID)
+                .toCertInfo();
+    }
+
+    private static Set<String> certificatePolicyOidsOf(X509Certificate cert) throws IOException {
+        byte[] raw = cert.getExtensionValue(Extension.certificatePolicies.getId());
+        if (raw == null) {
+            return Set.of();
+        }
+        org.bouncycastle.asn1.ASN1OctetString wrapper =
+                org.bouncycastle.asn1.ASN1OctetString.getInstance(raw);
+        org.bouncycastle.asn1.x509.CertificatePolicies policies =
+                org.bouncycastle.asn1.x509.CertificatePolicies.getInstance(wrapper.getOctets());
+        Set<String> oids = new HashSet<>();
+        for (org.bouncycastle.asn1.x509.PolicyInformation info : policies.getPolicyInformation()) {
+            oids.add(info.getPolicyIdentifier().getId());
+        }
+        return oids;
+    }
+
     private static Set<String> extractQcStatementOids(byte[] extensionValue) throws IOException {
         // Strip the OCTET STRING wrapper that getExtensionValue() returns.
         org.bouncycastle.asn1.ASN1OctetString wrapper =

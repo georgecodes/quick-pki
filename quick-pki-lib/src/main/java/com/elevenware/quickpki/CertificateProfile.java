@@ -22,6 +22,8 @@ import java.util.stream.Collectors;
  * {@link #QWAC} and {@link #QSEAL} model the EU eIDAS / PSD2 Qualified Web
  * Authentication and Qualified Electronic Seal profiles
  * (ETSI EN 319 412-2/-3 and ETSI TS 119 495 for the PSD2 attribute set).
+ * {@link #OS_TRANSPORT} and {@link #OS_SIGNING} model the Sesame Open Source
+ * transport and signing certificate profiles.
  */
 public enum CertificateProfile {
 
@@ -77,6 +79,33 @@ public enum CertificateProfile {
      * emits them by default.
      */
     QSEAL(
+            EnumSet.of(KeyUsageBit.DIGITAL_SIGNATURE, KeyUsageBit.NON_REPUDIATION),
+            EnumSet.noneOf(ExtendedKeyUsageId.class)),
+
+    /**
+     * Sesame Open Source transport (OS_TRANSPORT) certificate: KeyUsage
+     * digitalSignature, ExtendedKeyUsage clientAuth. Used for mutual-TLS
+     * client authentication between Sesame participants; carries the
+     * participant and software-statement URNs as URI subjectAltName entries
+     * and the Sesame transport policy OID in {@code certificatePolicies}.
+     * {@link Sesame#osTransport()} populates the standard policy OID by
+     * default.
+     */
+    OS_TRANSPORT(
+            EnumSet.of(KeyUsageBit.DIGITAL_SIGNATURE),
+            EnumSet.of(ExtendedKeyUsageId.CLIENT_AUTH)),
+
+    /**
+     * Sesame Open Source signing (OS_SIGNING) certificate: KeyUsage
+     * digitalSignature + nonRepudiation, ExtendedKeyUsage left empty so the
+     * caller can supply the ecosystem-specific private signing EKU OID via
+     * {@link CertInfo.Builder#extendedKeyUsageOid(String)}. Carries the
+     * participant and software-statement URNs as URI subjectAltName entries
+     * and the Sesame signing policy OID in {@code certificatePolicies}.
+     * {@link Sesame#osSigning()} populates the standard policy OID by
+     * default.
+     */
+    OS_SIGNING(
             EnumSet.of(KeyUsageBit.DIGITAL_SIGNATURE, KeyUsageBit.NON_REPUDIATION),
             EnumSet.noneOf(ExtendedKeyUsageId.class));
 

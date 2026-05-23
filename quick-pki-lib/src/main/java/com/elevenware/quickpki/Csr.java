@@ -4,6 +4,7 @@ import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Sequence;
+import org.bouncycastle.asn1.DERIA5String;
 import org.bouncycastle.asn1.DERSequence;
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
 import org.bouncycastle.asn1.x500.RDN;
@@ -11,11 +12,13 @@ import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x500.style.IETFUtils;
+import org.bouncycastle.asn1.x509.CertificatePolicies;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.Extensions;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.asn1.x509.PolicyInformation;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
@@ -94,6 +97,9 @@ public final class Csr {
         for (String ipAddress : info.getIpAddresses()) {
             sans.add(new GeneralName(GeneralName.iPAddress, ipAddress));
         }
+        for (String uri : info.getUris()) {
+            sans.add(new GeneralName(GeneralName.uniformResourceIdentifier, new DERIA5String(uri)));
+        }
         sans.addAll(info.getOtherSubjectAlternativeNames());
         ExtensionsGenerator extGen = new ExtensionsGenerator();
         try {
@@ -104,6 +110,10 @@ public final class Csr {
             if (!info.getQcStatements().isEmpty()) {
                 extGen.addExtension(Extension.qCStatements, false,
                         encodeQcStatements(info.getQcStatements()));
+            }
+            if (!info.getCertificatePolicies().isEmpty()) {
+                extGen.addExtension(Extension.certificatePolicies, false,
+                        encodeCertificatePolicies(info.getCertificatePolicies()));
             }
         } catch (IOException e) {
             throw new QuickPkiException("Failed to build CSR extensionRequest", e);
@@ -191,6 +201,19 @@ public final class Csr {
         }
         if (effective == CertificateProfile.BRSEAL) {
             addRdnIfPresent(builder, BCStyle.UID, info.getUserId());
+            addRdnIfPresent(builder, BCStyle.C, info.getCountry());
+            addRdnIfPresent(builder, BCStyle.O, info.getOrganization());
+            for (String organizationUnit : info.getOrganizationUnits()) {
+                addRdnIfPresent(builder, BCStyle.OU, organizationUnit);
+            }
+            addRdnIfPresent(builder, BCStyle.CN, info.getCommonName());
+            return builder.build();
+        }
+        if (effective == CertificateProfile.OS_TRANSPORT || effective == CertificateProfile.OS_SIGNING) {
+            // Sesame Open Source profile RDN order: country, organization,
+            // (optional) organizationUnit(s), commonName. The participant /
+            // software-statement URNs travel as URI SANs instead of subject
+            // RDNs, so the DN itself stays small.
             addRdnIfPresent(builder, BCStyle.C, info.getCountry());
             addRdnIfPresent(builder, BCStyle.O, info.getOrganization());
             for (String organizationUnit : info.getOrganizationUnits()) {
@@ -336,6 +359,16 @@ public final class Csr {
     }
 
     /**
+     * Returns the uniformResourceIdentifier (URI) entries from the CSR's
+     * requested subjectAltName extension, in source order. Used by the Sesame
+     * Open Source profiles (OS_TRANSPORT / OS_SIGNING) to carry the
+     * participant and software-statement URNs through to the issued cert.
+     */
+    public static List<String> uriSubjectAlternativeNames(PKCS10CertificationRequest csr) {
+        return sansOfTag(csr, GeneralName.uniformResourceIdentifier);
+    }
+
+    /**
      * Returns the QCStatements (RFC 3739) requested in the CSR's
      * extensionRequest, preserving each statement's ASN.1 payload. Empty list
      * when the CSR omitted the extension. Used by
@@ -367,6 +400,48 @@ public final class Csr {
             result.add(new QcStatement(oid, info));
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Returns the policy OIDs requested in the CSR's extensionRequest
+     * {@code certificatePolicies} extension, preserving source order. Empty
+     * when the CSR omitted the extension. The Sesame Open Source profiles
+     * (OS_TRANSPORT / OS_SIGNING) carry their ecosystem policy OID this way.
+     */
+    public static List<String> certificatePolicies(PKCS10CertificationRequest csr) {
+        Objects.requireNonNull(csr, "csr must not be null");
+        Extensions extensions = csr.getRequestedExtensions();
+        if (extensions == null) {
+            return List.of();
+        }
+        Extension polExt = extensions.getExtension(Extension.certificatePolicies);
+        if (polExt == null) {
+            return List.of();
+        }
+        CertificatePolicies policies;
+        try {
+            policies = CertificatePolicies.getInstance(polExt.getParsedValue());
+        } catch (Exception e) {
+            throw new QuickPkiException("CSR carries a malformed certificatePolicies extension", e);
+        }
+        List<String> result = new ArrayList<>();
+        for (PolicyInformation info : policies.getPolicyInformation()) {
+            result.add(info.getPolicyIdentifier().getId());
+        }
+        return List.copyOf(result);
+    }
+
+    /**
+     * Encodes a list of policy OIDs as a {@link CertificatePolicies} value
+     * (RFC 5280 §4.2.1.4), ready to wrap in an X.509 Extension value or to
+     * hand to openssl as a {@code DER:} blob.
+     */
+    public static CertificatePolicies encodeCertificatePolicies(List<String> policyOids) {
+        PolicyInformation[] entries = new PolicyInformation[policyOids.size()];
+        for (int i = 0; i < policyOids.size(); i++) {
+            entries[i] = new PolicyInformation(new ASN1ObjectIdentifier(policyOids.get(i)));
+        }
+        return new CertificatePolicies(entries);
     }
 
     /**
@@ -488,6 +563,8 @@ public final class Csr {
             }
             if (tagNo == GeneralName.iPAddress) {
                 result.add(decodeIpAddress(name));
+            } else if (tagNo == GeneralName.uniformResourceIdentifier) {
+                result.add(DERIA5String.getInstance(name.getName()).getString());
             } else {
                 result.add(name.getName().toString());
             }

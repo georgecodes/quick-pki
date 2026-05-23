@@ -22,10 +22,13 @@ public final class CertInfo {
     private final Instant validUntil;
     private final List<String> dnsNames;
     private final List<String> ipAddresses;
+    private final List<String> uris;
     private final List<GeneralName> otherSubjectAlternativeNames;
     private final List<QcStatement> qcStatements;
+    private final List<String> certificatePolicies;
     private final Set<KeyUsageBit> keyUsages;
     private final Set<ExtendedKeyUsageId> extendedKeyUsages;
+    private final List<String> extendedKeyUsageOids;
     private final CertificateProfile profile;
 
     private CertInfo(Builder builder) {
@@ -34,8 +37,11 @@ public final class CertInfo {
         this.validUntil = builder.validUntil;
         this.dnsNames = List.copyOf(builder.dnsNames);
         this.ipAddresses = List.copyOf(builder.ipAddresses);
+        this.uris = List.copyOf(builder.uris);
         this.otherSubjectAlternativeNames = List.copyOf(builder.otherSubjectAlternativeNames);
         this.qcStatements = List.copyOf(builder.qcStatements);
+        this.certificatePolicies = List.copyOf(builder.certificatePolicies);
+        this.extendedKeyUsageOids = List.copyOf(builder.extendedKeyUsageOids);
         // Never null: a CertInfo without an explicit profile behaves exactly
         // as QuickPki did before profiles existed.
         this.profile = builder.profile == null ? CertificateProfile.DEFAULT : builder.profile;
@@ -82,6 +88,9 @@ public final class CertInfo {
         for (String ip : Csr.ipSubjectAlternativeNames(csr)) {
             builder.ipAddress(ip);
         }
+        for (String uri : Csr.uriSubjectAlternativeNames(csr)) {
+            builder.uri(uri);
+        }
         for (GeneralName otherName : Csr.otherSubjectAlternativeNames(csr)) {
             builder.otherSubjectAlternativeName(otherName);
         }
@@ -90,6 +99,12 @@ public final class CertInfo {
         // from a CSR the subscriber built with EuQualified.qwac()/qseal().
         for (QcStatement statement : Csr.qcStatements(csr)) {
             builder.qcStatement(statement);
+        }
+        // certificatePolicies travels in the CSR's extensionRequest too;
+        // carry the policy OIDs through so a Sesame OS_TRANSPORT / OS_SIGNING
+        // profile can be issued straight from a CSR built with Sesame.os*().
+        for (String policyOid : Csr.certificatePolicies(csr)) {
+            builder.certificatePolicy(policyOid);
         }
         return builder;
     }
@@ -114,8 +129,25 @@ public final class CertInfo {
         return ipAddresses;
     }
 
+    /**
+     * URI subjectAltName entries (eg. {@code urn:odtf:finance:...}) to emit on
+     * the issued certificate. Empty when the caller has set none.
+     */
+    public List<String> getUris() {
+        return uris;
+    }
+
     public List<GeneralName> getOtherSubjectAlternativeNames() {
         return otherSubjectAlternativeNames;
+    }
+
+    /**
+     * Policy OIDs to emit in the leaf's {@code certificatePolicies} extension
+     * (RFC 5280 §4.2.1.4). Empty list when the caller has set none; the
+     * extension is omitted in that case.
+     */
+    public List<String> getCertificatePolicies() {
+        return certificatePolicies;
     }
 
     /**
@@ -137,6 +169,17 @@ public final class CertInfo {
         return extendedKeyUsages;
     }
 
+    /**
+     * Arbitrary ExtendedKeyUsage purpose OIDs to emit on the leaf in addition
+     * to any {@link ExtendedKeyUsageId} values. Used by profiles that pin a
+     * private OID (eg. Sesame OS_SIGNING). Empty when the caller has set none.
+     * Like {@link #getExtendedKeyUsages()}, supplying any OID here counts as
+     * an explicit override of the profile's default EKU set.
+     */
+    public List<String> getExtendedKeyUsageOids() {
+        return extendedKeyUsageOids;
+    }
+
     // The selected certificate profile; never null (defaults to
     // CertificateProfile.DEFAULT). The profile supplies KeyUsage /
     // ExtendedKeyUsage defaults that explicit Builder.keyUsage(...) /
@@ -154,18 +197,22 @@ public final class CertInfo {
                 && Objects.equals(validUntil, that.validUntil)
                 && Objects.equals(dnsNames, that.dnsNames)
                 && Objects.equals(ipAddresses, that.ipAddresses)
+                && Objects.equals(uris, that.uris)
                 && Objects.equals(otherSubjectAlternativeNames, that.otherSubjectAlternativeNames)
                 && Objects.equals(qcStatements, that.qcStatements)
+                && Objects.equals(certificatePolicies, that.certificatePolicies)
                 && Objects.equals(keyUsages, that.keyUsages)
                 && Objects.equals(extendedKeyUsages, that.extendedKeyUsages)
+                && Objects.equals(extendedKeyUsageOids, that.extendedKeyUsageOids)
                 && profile == that.profile;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(subjectName, validFrom, validUntil, dnsNames,
-                ipAddresses, otherSubjectAlternativeNames, qcStatements,
-                keyUsages, extendedKeyUsages, profile);
+                ipAddresses, uris, otherSubjectAlternativeNames, qcStatements,
+                certificatePolicies, keyUsages, extendedKeyUsages,
+                extendedKeyUsageOids, profile);
     }
 
     @Override
@@ -176,10 +223,13 @@ public final class CertInfo {
                 + ", validUntil=" + validUntil
                 + ", dnsNames=" + dnsNames
                 + ", ipAddresses=" + ipAddresses
+                + ", uris=" + uris
                 + ", otherSubjectAlternativeNames=" + otherSubjectAlternativeNames
                 + ", qcStatements=" + qcStatements
+                + ", certificatePolicies=" + certificatePolicies
                 + ", keyUsages=" + keyUsages
                 + ", extendedKeyUsages=" + extendedKeyUsages
+                + ", extendedKeyUsageOids=" + extendedKeyUsageOids
                 + ", profile=" + profile
                 + '}';
     }
@@ -190,10 +240,13 @@ public final class CertInfo {
         private Instant validUntil;
         private final List<String> dnsNames = new ArrayList<>();
         private final List<String> ipAddresses = new ArrayList<>();
+        private final List<String> uris = new ArrayList<>();
         private final List<GeneralName> otherSubjectAlternativeNames = new ArrayList<>();
         private final List<QcStatement> qcStatements = new ArrayList<>();
+        private final List<String> certificatePolicies = new ArrayList<>();
         private EnumSet<KeyUsageBit> keyUsages;
         private EnumSet<ExtendedKeyUsageId> extendedKeyUsages;
+        private final List<String> extendedKeyUsageOids = new ArrayList<>();
         private CertificateProfile profile;
 
         private Builder() {
@@ -221,6 +274,16 @@ public final class CertInfo {
 
         public Builder ipAddress(String ipAddress) {
             this.ipAddresses.add(Objects.requireNonNull(ipAddress, "ipAddress must not be null"));
+            return this;
+        }
+
+        /**
+         * Adds a URI subjectAltName entry (RFC 5280 §4.2.1.6). Sesame
+         * OS_TRANSPORT / OS_SIGNING certificates carry the participant and
+         * software-statement URNs this way.
+         */
+        public Builder uri(String uri) {
+            this.uris.add(Objects.requireNonNull(uri, "uri must not be null"));
             return this;
         }
 
@@ -255,6 +318,16 @@ public final class CertInfo {
             return this;
         }
 
+        /**
+         * Adds a policy OID to the leaf's {@code certificatePolicies}
+         * extension (RFC 5280 §4.2.1.4). Multiple calls append.
+         */
+        public Builder certificatePolicy(String policyOid) {
+            this.certificatePolicies.add(Objects.requireNonNull(policyOid,
+                    "policyOid must not be null"));
+            return this;
+        }
+
         // Add a KeyUsage bit. Calling this any number of times overrides the
         // algorithm-aware default that QuickPki would otherwise pick. Unset
         // (no calls) means use the default. CA-only bits (keyCertSign,
@@ -285,6 +358,20 @@ public final class CertInfo {
                 this.extendedKeyUsages = EnumSet.noneOf(ExtendedKeyUsageId.class);
             }
             this.extendedKeyUsages.add(id);
+            return this;
+        }
+
+        /**
+         * Adds an arbitrary ExtendedKeyUsage purpose OID to the leaf, used by
+         * profiles that pin a private OID rather than one of the six standard
+         * {@link ExtendedKeyUsageId} values (eg. Sesame OS_SIGNING's
+         * ecosystem-specific signing EKU). Supplying any OID here counts as
+         * an explicit override of the profile's default EKU set, just like
+         * calling {@link #extendedKeyUsage(ExtendedKeyUsageId)}.
+         */
+        public Builder extendedKeyUsageOid(String oid) {
+            this.extendedKeyUsageOids.add(Objects.requireNonNull(oid,
+                    "extendedKeyUsage oid must not be null"));
             return this;
         }
 
