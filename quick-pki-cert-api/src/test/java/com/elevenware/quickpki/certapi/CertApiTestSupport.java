@@ -6,7 +6,6 @@ import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
-import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
@@ -14,11 +13,8 @@ import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.h2.jdbcx.JdbcDataSource;
 
 import javax.sql.DataSource;
-import java.io.StringWriter;
-import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.PublicKey;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -93,25 +89,6 @@ final class CertApiTestSupport {
         ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
         PKCS10CertificationRequest csr = builder.build(signer);
         return Base64.getEncoder().encodeToString(csr.getEncoded());
-    }
-
-    /** Generates a fresh RSA 2048 key pair. */
-    static KeyPair rsaKeyPair() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-        generator.initialize(2048);
-        return generator.generateKeyPair();
-    }
-
-    /**
-     * Returns the public key in the on-the-wire shape the BRCAC/BRSEAL
-     * endpoints expect: a base64 of a PEM-encoded SubjectPublicKeyInfo.
-     */
-    static String base64PublicKey(PublicKey publicKey) throws Exception {
-        StringWriter sw = new StringWriter();
-        try (JcaPEMWriter writer = new JcaPEMWriter(sw)) {
-            writer.writeObject(publicKey);
-        }
-        return Base64.getEncoder().encodeToString(sw.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     private static GeneralName otherName(String oid, String value) {

@@ -55,14 +55,14 @@ record CertificateRequest(String csr, String profile) {
 }
 
 /**
- * Inbound JSON request body for {@code POST /v1/certificates/brcac}. The
- * consumer supplies the subject attributes plus a PEM-encoded
- * SubjectPublicKeyInfo public key; the server constructs a synthetic PKCS#10
- * around it, issues the BRCAC certificate, and returns both. Country defaults
- * to {@code BR} and jurisdictionCountry to {@code BR} when omitted.
+ * Inbound JSON request body for {@code POST /v1/openssl-configs/brcac}. The
+ * caller supplies the BRCAC subject attributes; the server returns an
+ * openssl {@code req} config that bakes them in, so the caller can produce
+ * a compliant CSR with their own private key via
+ * {@code openssl req -new -config brcac.cnf -key key.pem -out csr.pem}.
+ * Country and jurisdictionCountry default to {@code BR} when omitted.
  */
-record BrcacCertificateRequest(
-        String publicKey,
+record BrcacOpensslConfigRequest(
         String commonName,
         String businessCategory,
         String serialNumber,
@@ -78,13 +78,13 @@ record BrcacCertificateRequest(
 }
 
 /**
- * Inbound JSON request body for {@code POST /v1/certificates/brseal}. The
- * consumer supplies the subject attributes, the four ICP-Brasil otherName
- * SAN values, plus a PEM-encoded SubjectPublicKeyInfo public key. Country
- * defaults to {@code BR} and organization to {@code ICP-Brasil} when omitted.
+ * Inbound JSON request body for {@code POST /v1/openssl-configs/brseal}.
+ * Same idea as {@link BrcacOpensslConfigRequest}, with the BRSEAL subject
+ * attributes and the four ICP-Brasil otherName SAN values that go into the
+ * generated config. Country defaults to {@code BR}, organization to
+ * {@code ICP-Brasil} when omitted.
  */
-record BrsealCertificateRequest(
-        String publicKey,
+record BrsealOpensslConfigRequest(
         String commonName,
         String userId,
         String country,
@@ -95,4 +95,13 @@ record BrsealCertificateRequest(
         String responsiblePersonData,
         String companyCei
 ) {
+}
+
+/**
+ * Response body for {@code POST /v1/openssl-configs/{brcac,brseal}}: the
+ * generated openssl {@code req} config, base64-encoded (consistent with how
+ * CSRs and certs travel on this API), plus a suggested filename for callers
+ * that want to save the config to disk before invoking openssl.
+ */
+record OpensslConfigResponse(String filename, String config) {
 }

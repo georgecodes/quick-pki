@@ -21,6 +21,8 @@ servers:
 tags:
   - name: Certificates
     description: Issue and retrieve certificates
+  - name: OpenSSL configs
+    description: Generate openssl req configs for the Open Finance Brasil certificate profiles
   - name: Public
     description: Unauthenticated endpoints
 
@@ -64,23 +66,23 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /v1/certificates/brcac:
+  /v1/openssl-configs/brcac:
     post:
-      tags: [Certificates]
-      summary: Issue an Open Finance Brasil BRCAC certificate from structured fields
+      tags: [OpenSSL configs]
+      summary: Generate an openssl req config for an Open Finance Brasil BRCAC CSR
       description: |
-        Convenience endpoint that builds the PKCS#10 server-side. The caller
-        supplies the Open Finance Brasil BRCAC subject attributes and their
-        PEM-encoded `SubjectPublicKeyInfo` public key; the server assembles
-        the CSR, signs the certificate, and returns both.
+        Returns an openssl `req` config that bakes in the BRCAC subject DN
+        (in the spec-mandated RDN order) and the requested DNS SANs. The
+        caller saves the config to disk and produces a compliant CSR locally
+        with their own private key:
 
-        The CSR in the response is a synthetic audit artifact: it carries
-        the supplied public key and the requested subject and SANs, but is
-        signed by an ephemeral server key, so its signature deliberately
-        will **not** verify against the embedded public key. It is recorded
-        and returned as a record of what was submitted, not as a
-        re-submittable proof-of-possession request.
-      operationId: issueBrcacCertificate
+        ```
+        openssl req -new -config brcac.cnf -key my-key.pem -out my-csr.pem
+        ```
+
+        The resulting CSR can then be submitted to `POST /v1/certificates`
+        with `profile=BRCAC` for issuance.
+      operationId: generateBrcacOpensslConfig
       security:
         - bearerAuth: []
       requestBody:
@@ -88,20 +90,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/BrcacCertificateRequest'
+              $ref: '#/components/schemas/BrcacOpensslConfigRequest'
       responses:
-        '201':
-          description: Certificate issued
-          headers:
-            Location:
-              description: URL of the persisted certificate resource
-              schema:
-                type: string
-                format: uri
+        '200':
+          description: openssl config generated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IssuedCertificate'
+                $ref: '#/components/schemas/OpensslConfigResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -111,17 +107,17 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /v1/certificates/brseal:
+  /v1/openssl-configs/brseal:
     post:
-      tags: [Certificates]
-      summary: Issue an Open Finance Brasil BRSEAL certificate from structured fields
+      tags: [OpenSSL configs]
+      summary: Generate an openssl req config for an Open Finance Brasil BRSEAL CSR
       description: |
-        BRSEAL counterpart to `/v1/certificates/brcac`. Caller supplies the
-        BRSEAL subject attributes, the four ICP-Brasil otherName SAN values,
-        and their PEM-encoded `SubjectPublicKeyInfo`; the server assembles
-        the CSR and signs the certificate. The same synthetic-CSR caveat
-        applies as for the BRCAC endpoint.
-      operationId: issueBrsealCertificate
+        BRSEAL counterpart to `/v1/openssl-configs/brcac`. Returns an openssl
+        `req` config with the BRSEAL subject DN, three organizationalUnit
+        RDNs, and the four required ICP-Brasil otherName SAN entries. The
+        resulting CSR can be submitted to `POST /v1/certificates` with
+        `profile=BRSEAL` for issuance.
+      operationId: generateBrsealOpensslConfig
       security:
         - bearerAuth: []
       requestBody:
@@ -129,19 +125,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/BrsealCertificateRequest'
+              $ref: '#/components/schemas/BrsealOpensslConfigRequest'
       responses:
-        '201':
-          description: Certificate issued
-          headers:
-            Location:
-              schema:
-                type: string
-                format: uri
+        '200':
+          description: openssl config generated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IssuedCertificate'
+                $ref: '#/components/schemas/OpensslConfigResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -301,10 +292,9 @@ components:
             Omitted or `DEFAULT` issues a general-purpose TLS leaf.
           example: BRCAC
 
-    BrcacCertificateRequest:
+    BrcacOpensslConfigRequest:
       type: object
       required:
-        - publicKey
         - commonName
         - businessCategory
         - serialNumber
@@ -315,12 +305,6 @@ components:
         - userId
         - dnsNames
       properties:
-        publicKey:
-          type: string
-          format: byte
-          description: |
-            A base64 encoding of a PEM-encoded `SubjectPublicKeyInfo` for the
-            subscriber's public key. Open Finance Brasil mandates RSA 2048.
         commonName:
           type: string
           description: Subject commonName; typically the transport hostname.
@@ -369,10 +353,9 @@ components:
           example:
             - transport.example.com
 
-    BrsealCertificateRequest:
+    BrsealOpensslConfigRequest:
       type: object
       required:
-        - publicKey
         - commonName
         - userId
         - organizationUnits
@@ -381,12 +364,6 @@ components:
         - responsiblePersonData
         - companyCei
       properties:
-        publicKey:
-          type: string
-          format: byte
-          description: |
-            A base64 encoding of a PEM-encoded `SubjectPublicKeyInfo` for the
-            subscriber's public key.
         commonName:
           type: string
           example: Seal Co
@@ -425,6 +402,25 @@ components:
           description: ICP-Brasil otherName `2.16.76.1.3.7`.
           example: "123456789012"
 
+    OpensslConfigResponse:
+      type: object
+      required: [filename, config]
+      properties:
+        filename:
+          type: string
+          description: |
+            Suggested filename for saving the config; `brcac.cnf` for the
+            BRCAC endpoint, `brseal.cnf` for the BRSEAL endpoint.
+          example: brcac.cnf
+        config:
+          type: string
+          format: byte
+          description: |
+            The generated openssl `req` config, base64-encoded. Decode and
+            save to disk, then run
+            `openssl req -new -config <file>.cnf -key <your-key>.pem -out csr.pem`
+            to produce the CSR.
+
     IssuedCertificate:
       type: object
       properties:
@@ -452,13 +448,10 @@ components:
           type: string
           format: byte
           description: |
-            The PKCS#10 the certificate was issued from, as base64-encoded PEM.
-            For requests submitted to `/v1/certificates` this is the CSR the
-            caller supplied. For `/v1/certificates/brcac` and
-            `/v1/certificates/brseal` it is a synthetic CSR built server-side
-            around the supplied public key, signed by an ephemeral key — its
-            signature does **not** verify against the embedded public key.
-            Omitted only for certificates persisted before this field existed.
+            The PKCS#10 the certificate was issued from, as base64-encoded
+            PEM — exactly what the caller submitted to `/v1/certificates`.
+            Persisted for audit. Omitted only for certificates persisted
+            before this field existed.
         notBefore:
           type: string
           format: date-time
