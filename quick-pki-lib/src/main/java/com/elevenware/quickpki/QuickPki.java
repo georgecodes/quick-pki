@@ -1,6 +1,7 @@
 package com.elevenware.quickpki;
 
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
@@ -39,6 +40,7 @@ import java.security.SecureRandom;
 import java.security.Security;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.RSAPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -442,6 +444,7 @@ public class QuickPki {
 
     private CertificateBundle intIssueCertificate(CertInfo info, PublicKey publicKey, KeyPair keyPair) throws Exception {
 
+        validateProfileCompliance(info, publicKey);
         Validity validity = resolveValidity(info);
         Date startDate = Date.from(validity.start());
         Date endDate = Date.from(validity.end());
@@ -454,7 +457,7 @@ public class QuickPki {
         if(subjectName == null) {
             subjectName = SubjectName.builder().commonName("Default Subject").build();
         }
-        X500Name subject = buildX500Name(subjectName);
+        X500Name subject = buildX500Name(subjectName, info.getProfile());
         ContentSigner rootCertContentSigner = new JcaContentSignerBuilder(issuerInfo.getEffectiveSignatureAlgorithm())
                 .setProvider(provider).build(this.issuer.getKeyPair().getPrivate());
         X509v3CertificateBuilder certificateBuilder =
@@ -462,7 +465,7 @@ public class QuickPki {
                         startDate, endDate, subject, publicKey);
 
         JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
-        certificateBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+        certificateBuilder.addExtension(Extension.basicConstraints, false, new BasicConstraints(false));
         certificateBuilder.addExtension(Extension.keyUsage, true, leafKeyUsageFor(publicKey, info));
         ExtendedKeyUsage eku = leafEkuFor(info);
         if (eku != null) {
@@ -491,6 +494,7 @@ public class QuickPki {
         for (String ipAddress : info.getIpAddresses()) {
             names.add(new GeneralName(GeneralName.iPAddress, ipAddress));
         }
+        names.addAll(info.getOtherSubjectAlternativeNames());
         if (names.isEmpty()) {
             return null;
         }
@@ -498,7 +502,19 @@ public class QuickPki {
     }
 
     private X500Name buildX500Name(SubjectName info) {
+        return buildX500Name(info, CertificateProfile.DEFAULT);
+    }
+
+    private X500Name buildX500Name(SubjectName info, CertificateProfile profile) {
         X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
+        if (profile == CertificateProfile.BRCAC) {
+            addOpenFinanceTransportRdns(builder, info);
+            return builder.build();
+        }
+        if (profile == CertificateProfile.BRSEAL) {
+            addOpenFinanceSigningRdns(builder, info);
+            return builder.build();
+        }
         builder.addRDN(BCStyle.CN, info.getCommonName());
         if(info.getCountry() != null) {
             builder.addRDN(BCStyle.C, info.getCountry());
@@ -506,8 +522,8 @@ public class QuickPki {
         if(info.getOrganization() != null) {
             builder.addRDN(BCStyle.O, info.getOrganization());
         }
-        if(info.getOrganizationUnit() != null) {
-            builder.addRDN(BCStyle.OU, info.getOrganizationUnit());
+        for (String organizationUnit : info.getOrganizationUnits()) {
+            builder.addRDN(BCStyle.OU, organizationUnit);
         }
         if(info.getDnQualifier() != null) {
             builder.addRDN(BCStyle.DN_QUALIFIER, info.getDnQualifier());
@@ -534,6 +550,143 @@ public class QuickPki {
             builder.addRDN(BCStyle.UID, info.getUserId());
         }
         return builder.build();
+    }
+
+    private void validateProfileCompliance(CertInfo info, PublicKey publicKey) {
+        CertificateProfile profile = info.getProfile();
+        if (profile != CertificateProfile.BRCAC && profile != CertificateProfile.BRSEAL) {
+            return;
+        }
+        validateOpenFinanceAlgorithm(publicKey);
+        SubjectName subjectName = info.getSubjectName();
+        if (subjectName == null) {
+            throw new IllegalArgumentException(profile + " certificates require an Open Finance subject DN");
+        }
+        if (profile == CertificateProfile.BRCAC) {
+            validateBrcac(info, subjectName);
+        } else {
+            validateBrseal(info, subjectName);
+        }
+    }
+
+    private void validateOpenFinanceAlgorithm(PublicKey publicKey) {
+        if (!(publicKey instanceof RSAPublicKey rsaPublicKey)) {
+            throw new IllegalArgumentException(
+                    "Open Finance Brasil BRCAC/BRSEAL certificates require an RSA public key");
+        }
+        if (rsaPublicKey.getModulus().bitLength() != 2048) {
+            throw new IllegalArgumentException(
+                    "Open Finance Brasil BRCAC/BRSEAL certificates require a 2048-bit RSA public key");
+        }
+        if (!"SHA256withRSA".equalsIgnoreCase(issuerInfo.getEffectiveSignatureAlgorithm())) {
+            throw new IllegalArgumentException(
+                    "Open Finance Brasil BRCAC/BRSEAL certificates require SHA256withRSA signatures");
+        }
+        if (!"RSA".equalsIgnoreCase(issuer.getCertificate().getPublicKey().getAlgorithm())) {
+            throw new IllegalArgumentException(
+                    "Open Finance Brasil BRCAC/BRSEAL certificates require an RSA issuing CA");
+        }
+    }
+
+    private void validateBrcac(CertInfo info, SubjectName subjectName) {
+        requireOneOf(subjectName.getBusinessCategory(), "businessCategory",
+                Set.of("Private Organization", "Government Entity", "Business Entity", "Non-Commercial Entity"));
+        requireEquals(subjectName.getJurisdictionCountry(), "jurisdictionCountry", "BR");
+        requireNonBlank(subjectName.getSerialNumber(), "serialNumber");
+        requireEquals(subjectName.getCountry(), "country", "BR");
+        requireNonBlank(subjectName.getOrganization(), "organization");
+        requireNonBlank(subjectName.getStateOrProvince(), "stateOrProvince");
+        requireNonBlank(subjectName.getLocality(), "locality");
+        requireNonBlank(subjectName.getOrganizationIdentifier(), "organizationIdentifier");
+        if (!subjectName.getOrganizationIdentifier().startsWith("OFBBR-")) {
+            throw new IllegalArgumentException("BRCAC organizationIdentifier must start with OFBBR-");
+        }
+        requireNonBlank(subjectName.getUserId(), "userId");
+        requireNonBlank(subjectName.getCommonName(), "commonName");
+        if (info.getDnsNames().isEmpty()) {
+            throw new IllegalArgumentException("BRCAC certificates require at least one DNS subjectAltName");
+        }
+        if (!info.getIpAddresses().isEmpty() || !info.getOtherSubjectAlternativeNames().isEmpty()) {
+            throw new IllegalArgumentException("BRCAC certificates support DNS subjectAltName entries only");
+        }
+    }
+
+    private void validateBrseal(CertInfo info, SubjectName subjectName) {
+        requireNonBlank(subjectName.getUserId(), "userId");
+        requireEquals(subjectName.getCountry(), "country", "BR");
+        requireEquals(subjectName.getOrganization(), "organization", "ICP-Brasil");
+        if (subjectName.getOrganizationUnits().size() < 3) {
+            throw new IllegalArgumentException(
+                    "BRSEAL certificates require three organizationUnit values");
+        }
+        requireNonBlank(subjectName.getCommonName(), "commonName");
+        if (!info.getDnsNames().isEmpty() || !info.getIpAddresses().isEmpty()) {
+            throw new IllegalArgumentException("BRSEAL certificates support ICP-Brasil otherName SAN entries only");
+        }
+        requireOtherName(info, "2.16.76.1.3.2");
+        requireOtherName(info, "2.16.76.1.3.3");
+        requireOtherName(info, "2.16.76.1.3.4");
+        requireOtherName(info, "2.16.76.1.3.7");
+    }
+
+    private void requireOtherName(CertInfo info, String oid) {
+        boolean found = info.getOtherSubjectAlternativeNames().stream()
+                .anyMatch(name -> oid.equals(otherNameOid(name)));
+        if (!found) {
+            throw new IllegalArgumentException("BRSEAL certificates require otherName " + oid);
+        }
+    }
+
+    private String otherNameOid(GeneralName name) {
+        try {
+            ASN1Sequence sequence = ASN1Sequence.getInstance(name.getName().toASN1Primitive());
+            return ASN1ObjectIdentifier.getInstance(sequence.getObjectAt(0)).getId();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("invalid otherName subjectAltName", e);
+        }
+    }
+
+    private void requireNonBlank(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " is required");
+        }
+    }
+
+    private void requireEquals(String value, String field, String expected) {
+        requireNonBlank(value, field);
+        if (!expected.equals(value)) {
+            throw new IllegalArgumentException(field + " must be " + expected);
+        }
+    }
+
+    private void requireOneOf(String value, String field, Set<String> expected) {
+        requireNonBlank(value, field);
+        if (!expected.contains(value)) {
+            throw new IllegalArgumentException(field + " must be one of " + expected);
+        }
+    }
+
+    private void addOpenFinanceTransportRdns(X500NameBuilder builder, SubjectName info) {
+        builder.addRDN(BCStyle.BUSINESS_CATEGORY, info.getBusinessCategory());
+        builder.addRDN(JURISDICTION_COUNTRY_NAME, info.getJurisdictionCountry());
+        builder.addRDN(BCStyle.SERIALNUMBER, info.getSerialNumber());
+        builder.addRDN(BCStyle.C, info.getCountry());
+        builder.addRDN(BCStyle.O, info.getOrganization());
+        builder.addRDN(BCStyle.ST, info.getStateOrProvince());
+        builder.addRDN(BCStyle.L, info.getLocality());
+        builder.addRDN(BCStyle.ORGANIZATION_IDENTIFIER, info.getOrganizationIdentifier());
+        builder.addRDN(BCStyle.UID, info.getUserId());
+        builder.addRDN(BCStyle.CN, info.getCommonName());
+    }
+
+    private void addOpenFinanceSigningRdns(X500NameBuilder builder, SubjectName info) {
+        builder.addRDN(BCStyle.UID, info.getUserId());
+        builder.addRDN(BCStyle.C, info.getCountry());
+        builder.addRDN(BCStyle.O, info.getOrganization());
+        for (String organizationUnit : info.getOrganizationUnits()) {
+            builder.addRDN(BCStyle.OU, organizationUnit);
+        }
+        builder.addRDN(BCStyle.CN, info.getCommonName());
     }
 
     // jurisdictionCountryName, the EV-style jurisdiction-of-incorporation

@@ -64,9 +64,14 @@ final class CertificateAuthorityService {
                     bundle.getCertificate(),
                     bundle.toCertificatePem(),
                     bundle.toCertificateChainPem());
+        } catch (IllegalArgumentException e) {
+            throw new CertApiException(400, "bad_csr",
+                    "could not issue a " + profile + " certificate from the supplied CSR: "
+                            + e.getMessage());
         } catch (QuickPkiException e) {
             throw new CertApiException(400, "bad_csr",
-                    "could not issue a certificate from the supplied CSR: " + rootMessage(e));
+                    "could not issue a " + profile + " certificate from the supplied CSR: "
+                            + rootMessage(e));
         }
     }
 

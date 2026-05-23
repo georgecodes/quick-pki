@@ -84,7 +84,7 @@ class CertApiServerTest {
     @Test
     void issuesACertificateUnderTheRequestedProfile() throws Exception {
         start("certificates:issue");
-        String csr = CertApiTestSupport.base64Csr("seal.example.com");
+        String csr = CertApiTestSupport.base64BrsealCsr("Seal Co");
 
         HttpResponse<String> response = post("/v1/certificates", "active-token",
                 "{\"csr\":\"" + csr + "\",\"profile\":\"BRSEAL\"}");
@@ -95,6 +95,20 @@ class CertApiServerTest {
         assertThat(cert.getKeyUsage()[0]).as("digitalSignature").isTrue();
         assertThat(cert.getKeyUsage()[1]).as("nonRepudiation").isTrue();
         assertThat(cert.getExtendedKeyUsage()).as("BRSEAL carries no EKU").isNull();
+    }
+
+    @Test
+    void rejectsNonCompliantProfileCsrAsBadRequest() throws Exception {
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64Csr("seal.example.com");
+
+        HttpResponse<String> response = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\",\"profile\":\"BRSEAL\"}");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        JsonNode body = Json.MAPPER.readTree(response.body());
+        assertThat(body.get("error").asText()).isEqualTo("bad_csr");
+        assertThat(body.get("error_description").asText()).contains("BRSEAL");
     }
 
     @Test

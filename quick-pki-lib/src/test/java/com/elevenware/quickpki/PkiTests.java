@@ -144,6 +144,36 @@ public class PkiTests {
     }
 
     @Test
+    void fromIssuerRejectsInvalidInputs() throws Exception {
+        IssuerInfo issuerInfo = IssuerInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Rehydrated Root").build())
+                .build();
+        QuickPki original = QuickPki.create(issuerInfo);
+
+        assertThrows(NullPointerException.class,
+                () -> QuickPki.fromIssuer(null, original.getIssuer()));
+        assertThrows(NullPointerException.class,
+                () -> QuickPki.fromIssuer(issuerInfo, null));
+
+        CertificateBundle publicKeyOnlyLeaf = original.issueCertificate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Public Key Only").build())
+                        .build(),
+                generateRsaKeyPair().getPublic());
+        IllegalArgumentException missingKeyEx = assertThrows(IllegalArgumentException.class,
+                () -> QuickPki.fromIssuer(issuerInfo, publicKeyOnlyLeaf));
+        assertTrue(missingKeyEx.getMessage().contains("private key"),
+                "rejection should mention the missing private key, got: " + missingKeyEx.getMessage());
+
+        CertificateBundle nonCaBundle = original.issueCertificate(CertInfo.builder()
+                .subjectName(SubjectName.builder().commonName("Not A CA").build())
+                .build());
+        IllegalArgumentException nonCaEx = assertThrows(IllegalArgumentException.class,
+                () -> QuickPki.fromIssuer(issuerInfo, nonCaBundle));
+        assertTrue(nonCaEx.getMessage().contains("not a CA"),
+                "rejection should mention CA status, got: " + nonCaEx.getMessage());
+    }
+
+    @Test
     void issuesCertificateWithDefaults() {
 
         QuickPki pki = QuickPki.createDefault();
@@ -905,6 +935,26 @@ public class PkiTests {
     }
 
     @Test
+    void publicKeyOnlyBundlesRejectPrivateKeyExports() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
+                        .subjectName(SubjectName.builder().commonName("Subscriber Key").build())
+                        .build(),
+                generateRsaKeyPair().getPublic());
+
+        QuickPkiException pemEx = assertThrows(QuickPkiException.class,
+                bundle::toPrivateKeyPem);
+        assertTrue(pemEx.getMessage().contains("no private key"),
+                "message should explain why PEM export is impossible, got: " + pemEx.getMessage());
+
+        QuickPkiException keyStoreEx = assertThrows(QuickPkiException.class,
+                () -> bundle.toKeyStore("subscriber", "changeit".toCharArray()));
+        assertTrue(keyStoreEx.getMessage().contains("no private key"),
+                "message should explain why KeyStore export is impossible, got: "
+                        + keyStoreEx.getMessage());
+    }
+
+    @Test
     void trustStoreContainsRootOnly() throws Exception {
         QuickPki root = QuickPki.createDefault();
         QuickPki intermediate = root.issueIntermediate(CertInfo.builder()
@@ -1270,6 +1320,42 @@ public class PkiTests {
         assertEquals(List.of("192.168.1.5"), info.getIpAddresses());
     }
 
+    @Test
+    void csrSubjectAlternativeNamesReturnsEmptyListWhenExtensionMissing() throws Exception {
+        PKCS10CertificationRequest csr = buildCsr(generateRsaKeyPair(),
+                "CN=no-san.example.com", List.of(), List.of());
+
+        assertEquals(List.of(), Csr.subjectAlternativeNames(csr));
+        assertEquals(List.of(), Csr.dnsSubjectAlternativeNames(csr));
+        assertEquals(List.of(), Csr.ipSubjectAlternativeNames(csr));
+    }
+
+    @Test
+    void csrSubjectAlternativeNamesReturnsDnsAndIpNamesInSourceOrder() throws Exception {
+        PKCS10CertificationRequest csr = buildCsrWithSanNames(generateRsaKeyPair(),
+                "CN=mixed.example.com",
+                List.of(
+                        new GeneralName(GeneralName.dNSName, "first.example.com"),
+                        new GeneralName(GeneralName.iPAddress, "10.0.0.1"),
+                        new GeneralName(GeneralName.dNSName, "second.example.com"),
+                        new GeneralName(GeneralName.iPAddress, "192.168.1.5")));
+
+        assertEquals(List.of("first.example.com", "10.0.0.1",
+                        "second.example.com", "192.168.1.5"),
+                Csr.subjectAlternativeNames(csr));
+    }
+
+    @Test
+    void csrSubjectAlternativeNamesIgnoresUnsupportedSanTypes() throws Exception {
+        PKCS10CertificationRequest csr = buildCsrWithSanNames(generateRsaKeyPair(),
+                "CN=unsupported-san.example.com",
+                List.of(
+                        new GeneralName(GeneralName.rfc822Name, "admin@example.com"),
+                        new GeneralName(GeneralName.dNSName, "kept.example.com")));
+
+        assertEquals(List.of("kept.example.com"), Csr.subjectAlternativeNames(csr));
+    }
+
     private static KeyPair generateRsaKeyPair() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
@@ -1303,16 +1389,30 @@ public class PkiTests {
         return builder.build(signer);
     }
 
+    private static PKCS10CertificationRequest buildCsrWithSanNames(KeyPair keys, String subjectDn,
+                                                                   List<GeneralName> sanNames) throws Exception {
+        X500Name subject = new X500Name(subjectDn);
+        PKCS10CertificationRequestBuilder builder =
+                new JcaPKCS10CertificationRequestBuilder(subject, keys.getPublic());
+        ExtensionsGenerator extGen = new ExtensionsGenerator();
+        extGen.addExtension(Extension.subjectAlternativeName, false,
+                new GeneralNames(sanNames.toArray(new GeneralName[0])));
+        builder.addAttribute(
+                org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.pkcs_9_at_extensionRequest,
+                extGen.generate());
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA")
+                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                .build(keys.getPrivate());
+        return builder.build(signer);
+    }
+
     // KeyUsage bit positions: digitalSignature=0, nonRepudiation=1,
     // keyEncipherment=2, keyAgreement=4.
     @Test
     void brcacProfileSetsTransportKeyUsageAndClientAuth() throws Exception {
         QuickPki pki = QuickPki.createDefault();
 
-        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
-                .subjectName(SubjectName.builder().commonName("transport.example.com").build())
-                .profile(CertificateProfile.BRCAC)
-                .build());
+        CertificateBundle bundle = pki.issueCertificate(brcacInfo("transport.example.com").build());
 
         boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
         assertNotNull(keyUsage, "BRCAC leaf must have a KeyUsage extension");
@@ -1330,10 +1430,7 @@ public class PkiTests {
     void brsealProfileSetsSigningKeyUsageAndOmitsExtendedKeyUsage() throws Exception {
         QuickPki pki = QuickPki.createDefault();
 
-        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
-                .subjectName(SubjectName.builder().commonName("Seal Co").build())
-                .profile(CertificateProfile.BRSEAL)
-                .build());
+        CertificateBundle bundle = pki.issueCertificate(brsealInfo("Seal Co").build());
 
         boolean[] keyUsage = bundle.getCertificate().getKeyUsage();
         assertNotNull(keyUsage, "BRSEAL leaf must have a KeyUsage extension");
@@ -1370,9 +1467,7 @@ public class PkiTests {
 
         // BRSEAL would default to no EKU and digitalSignature+nonRepudiation;
         // explicit builder calls must win over the profile.
-        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
-                .subjectName(SubjectName.builder().commonName("Override").build())
-                .profile(CertificateProfile.BRSEAL)
+        CertificateBundle bundle = pki.issueCertificate(brsealInfo("Override")
                 .keyUsage(KeyUsageBit.DIGITAL_SIGNATURE)
                 .extendedKeyUsage(ExtendedKeyUsageId.CODE_SIGNING)
                 .build());
@@ -1413,23 +1508,37 @@ public class PkiTests {
     }
 
     @Test
+    void certificateProfileFromNameDefaultsNullAndBlankToDefault() {
+        assertEquals(CertificateProfile.DEFAULT, CertificateProfile.fromName(null));
+        assertEquals(CertificateProfile.DEFAULT, CertificateProfile.fromName(""));
+        assertEquals(CertificateProfile.DEFAULT, CertificateProfile.fromName("   "));
+    }
+
+    @Test
+    void certificateProfileFromNameIsTrimmedAndCaseInsensitive() {
+        assertEquals(CertificateProfile.BRCAC, CertificateProfile.fromName(" brcac "));
+        assertEquals(CertificateProfile.TLS_SERVER, CertificateProfile.fromName("tls_server"));
+        assertEquals(CertificateProfile.TLS_CLIENT, CertificateProfile.fromName("TLS_CLIENT"));
+    }
+
+    @Test
+    void certificateProfileFromNameRejectsUnknownNameWithValidOptions() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> CertificateProfile.fromName("made-up"));
+
+        assertTrue(ex.getMessage().contains("made-up"),
+                "message should include rejected profile name, got: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("DEFAULT"),
+                "message should list valid profile names, got: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("BRCAC"),
+                "message should list valid profile names, got: " + ex.getMessage());
+    }
+
+    @Test
     void openFinanceSubjectAttributesAppearInIssuedCertificate() throws Exception {
         QuickPki pki = QuickPki.createDefault();
 
-        CertificateBundle bundle = pki.issueCertificate(CertInfo.builder()
-                .profile(CertificateProfile.BRCAC)
-                .subjectName(SubjectName.builder()
-                        .commonName("transport.example.com")
-                        .country("BR")
-                        .organization("Example Participant Ltda")
-                        .organizationIdentifier("OFBBR-12345678")
-                        .businessCategory("Private Organization")
-                        .jurisdictionCountry("BR")
-                        .serialNumber("12345678000199")
-                        .userId("software-statement-uuid")
-                        .build())
-                .dnsName("transport.example.com")
-                .build());
+        CertificateBundle bundle = pki.issueCertificate(brcacInfo("transport.example.com").build());
 
         X500Name subject = new JcaX509CertificateHolder(bundle.getCertificate()).getSubject();
         assertEquals("OFBBR-12345678",
@@ -1451,7 +1560,13 @@ public class PkiTests {
         KeyPair subscriberKeys = generateRsaKeyPair();
 
         PKCS10CertificationRequest csr = buildCsr(subscriberKeys,
-                "CN=transport.example.com,O=Example,2.5.4.97=#0c0e4f464242522d3132333435363738",
+                "businessCategory=Private Organization,"
+                        + "1.3.6.1.4.1.311.60.2.1.3=BR,"
+                        + "serialNumber=12345678000199,"
+                        + "C=BR,O=Example Participant Ltda,ST=SP,L=Sao Paulo,"
+                        + "2.5.4.97=#0c0e4f464242522d3132333435363738,"
+                        + "UID=software-statement-uuid,"
+                        + "CN=transport.example.com",
                 List.of("transport.example.com"),
                 List.of());
 
@@ -1464,6 +1579,144 @@ public class PkiTests {
         X500Name subject = new JcaX509CertificateHolder(bundle.getCertificate()).getSubject();
         assertEquals("OFBBR-12345678",
                 subject.getRDNs(BCStyle.ORGANIZATION_IDENTIFIER)[0].getFirst().getValue().toString());
+    }
+
+    @Test
+    void brcacProfileRejectsMissingOpenFinanceFields() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(CertInfo.builder()
+                        .profile(CertificateProfile.BRCAC)
+                        .subjectName(SubjectName.builder().commonName("transport.example.com").build())
+                        .dnsName("transport.example.com")
+                        .build()));
+
+        assertTrue(ex.getMessage().contains("businessCategory"),
+                "message should identify the missing Open Finance attribute, got: " + ex.getMessage());
+    }
+
+    @Test
+    void brcacProfileRejectsNonDnsSubjectAlternativeNames() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(brcacInfo("transport.example.com")
+                        .ipAddress("127.0.0.1")
+                        .build()));
+
+        assertTrue(ex.getMessage().contains("DNS"),
+                "message should explain BRCAC SAN restrictions, got: " + ex.getMessage());
+    }
+
+    @Test
+    void brsealProfileRequiresIcpBrasilOtherNameSubjectAlternativeNames() {
+        QuickPki pki = QuickPki.createDefault();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(CertInfo.builder()
+                        .profile(CertificateProfile.BRSEAL)
+                        .subjectName(brsealSubject("Seal Co"))
+                        .build()));
+
+        assertTrue(ex.getMessage().contains("2.16.76.1.3.2"),
+                "message should identify the missing ICP-Brasil otherName, got: " + ex.getMessage());
+    }
+
+    @Test
+    void openFinanceProfilesRejectNonRsaSubscriberKeys() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+        generator.initialize(new java.security.spec.ECGenParameterSpec("secp256r1"));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> pki.issueCertificate(brcacInfo("transport.example.com").build(),
+                        generator.generateKeyPair().getPublic()));
+
+        assertTrue(ex.getMessage().contains("RSA"),
+                "message should identify the RSA requirement, got: " + ex.getMessage());
+    }
+
+    @Test
+    void brcacSubjectRdnsFollowOpenFinanceOrder() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        X500Name subject = new JcaX509CertificateHolder(
+                pki.issueCertificate(brcacInfo("transport.example.com").build()).getCertificate())
+                .getSubject();
+
+        org.bouncycastle.asn1.x500.RDN[] rdns = subject.getRDNs();
+        assertEquals(BCStyle.BUSINESS_CATEGORY, rdns[0].getFirst().getType());
+        assertEquals(new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.3.6.1.4.1.311.60.2.1.3"),
+                rdns[1].getFirst().getType());
+        assertEquals(BCStyle.SERIALNUMBER, rdns[2].getFirst().getType());
+        assertEquals(BCStyle.C, rdns[3].getFirst().getType());
+        assertEquals(BCStyle.O, rdns[4].getFirst().getType());
+        assertEquals(BCStyle.ST, rdns[5].getFirst().getType());
+        assertEquals(BCStyle.L, rdns[6].getFirst().getType());
+        assertEquals(BCStyle.ORGANIZATION_IDENTIFIER, rdns[7].getFirst().getType());
+        assertEquals(BCStyle.UID, rdns[8].getFirst().getType());
+        assertEquals(BCStyle.CN, rdns[9].getFirst().getType());
+    }
+
+    @Test
+    void brsealSubjectRdnsFollowOpenFinanceOrder() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        X500Name subject = new JcaX509CertificateHolder(
+                pki.issueCertificate(brsealInfo("Seal Co").build()).getCertificate())
+                .getSubject();
+
+        org.bouncycastle.asn1.x500.RDN[] rdns = subject.getRDNs();
+        assertEquals(BCStyle.UID, rdns[0].getFirst().getType());
+        assertEquals(BCStyle.C, rdns[1].getFirst().getType());
+        assertEquals(BCStyle.O, rdns[2].getFirst().getType());
+        assertEquals(BCStyle.OU, rdns[3].getFirst().getType());
+        assertEquals(BCStyle.OU, rdns[4].getFirst().getType());
+        assertEquals(BCStyle.OU, rdns[5].getFirst().getType());
+        assertEquals(BCStyle.CN, rdns[6].getFirst().getType());
+    }
+
+    private static CertInfo.Builder brcacInfo(String commonName) {
+        return CertInfo.builder()
+                .profile(CertificateProfile.BRCAC)
+                .subjectName(brcacSubject(commonName))
+                .dnsName(commonName);
+    }
+
+    private static SubjectName brcacSubject(String commonName) {
+        return SubjectName.builder()
+                .businessCategory("Private Organization")
+                .jurisdictionCountry("BR")
+                .serialNumber("12345678000199")
+                .country("BR")
+                .organization("Example Participant Ltda")
+                .stateOrProvince("SP")
+                .locality("Sao Paulo")
+                .organizationIdentifier("OFBBR-12345678")
+                .userId("software-statement-uuid")
+                .commonName(commonName)
+                .build();
+    }
+
+    private static CertInfo.Builder brsealInfo(String commonName) {
+        return CertInfo.builder()
+                .profile(CertificateProfile.BRSEAL)
+                .subjectName(brsealSubject(commonName))
+                .otherName("2.16.76.1.3.2", "Responsible Person")
+                .otherName("2.16.76.1.3.3", "12345678000199")
+                .otherName("2.16.76.1.3.4", "197001010000000000000")
+                .otherName("2.16.76.1.3.7", "123456789012");
+    }
+
+    private static SubjectName brsealSubject(String commonName) {
+        return SubjectName.builder()
+                .userId("OFBBR-12345678")
+                .country("BR")
+                .organization("ICP-Brasil")
+                .addOrganizationUnit("Example CA")
+                .addOrganizationUnit("12345678000199")
+                .addOrganizationUnit("Validacao por certificado digital")
+                .commonName(commonName)
+                .build();
     }
 
     @BeforeAll

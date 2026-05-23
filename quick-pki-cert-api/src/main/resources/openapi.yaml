@@ -207,6 +207,10 @@ components:
             The certificate profile to issue under. The profile fixes the
             leaf's KeyUsage and ExtendedKeyUsage. `BRCAC` and `BRSEAL` are the
             Open Finance Brasil transport and signing certificate profiles.
+            For those profiles the CSR subject and subjectAltName extension
+            must carry the Open Finance Brasil attributes required by the
+            certificate standard; non-compliant CSRs are rejected with
+            `bad_csr`.
             Omitted or `DEFAULT` issues a general-purpose TLS leaf.
           example: BRCAC
 

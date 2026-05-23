@@ -1,6 +1,11 @@
 package com.elevenware.quickpki;
 
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.DERPrintableString;
+import org.bouncycastle.asn1.DERSequence;
+import org.bouncycastle.asn1.DERTaggedObject;
+import org.bouncycastle.asn1.x509.GeneralName;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -17,6 +22,7 @@ public final class CertInfo {
     private final Instant validUntil;
     private final List<String> dnsNames;
     private final List<String> ipAddresses;
+    private final List<GeneralName> otherSubjectAlternativeNames;
     private final Set<KeyUsageBit> keyUsages;
     private final Set<ExtendedKeyUsageId> extendedKeyUsages;
     private final CertificateProfile profile;
@@ -27,6 +33,7 @@ public final class CertInfo {
         this.validUntil = builder.validUntil;
         this.dnsNames = List.copyOf(builder.dnsNames);
         this.ipAddresses = List.copyOf(builder.ipAddresses);
+        this.otherSubjectAlternativeNames = List.copyOf(builder.otherSubjectAlternativeNames);
         // Never null: a CertInfo without an explicit profile behaves exactly
         // as QuickPki did before profiles existed.
         this.profile = builder.profile == null ? CertificateProfile.DEFAULT : builder.profile;
@@ -73,6 +80,9 @@ public final class CertInfo {
         for (String ip : Csr.ipSubjectAlternativeNames(csr)) {
             builder.ipAddress(ip);
         }
+        for (GeneralName otherName : Csr.otherSubjectAlternativeNames(csr)) {
+            builder.otherSubjectAlternativeName(otherName);
+        }
         return builder;
     }
 
@@ -94,6 +104,10 @@ public final class CertInfo {
 
     public List<String> getIpAddresses() {
         return ipAddresses;
+    }
+
+    public List<GeneralName> getOtherSubjectAlternativeNames() {
+        return otherSubjectAlternativeNames;
     }
 
     // Null when the caller hasn't expressed a preference (QuickPki picks an
@@ -124,6 +138,7 @@ public final class CertInfo {
                 && Objects.equals(validUntil, that.validUntil)
                 && Objects.equals(dnsNames, that.dnsNames)
                 && Objects.equals(ipAddresses, that.ipAddresses)
+                && Objects.equals(otherSubjectAlternativeNames, that.otherSubjectAlternativeNames)
                 && Objects.equals(keyUsages, that.keyUsages)
                 && Objects.equals(extendedKeyUsages, that.extendedKeyUsages)
                 && profile == that.profile;
@@ -132,7 +147,7 @@ public final class CertInfo {
     @Override
     public int hashCode() {
         return Objects.hash(subjectName, validFrom, validUntil, dnsNames,
-                ipAddresses, keyUsages, extendedKeyUsages, profile);
+                ipAddresses, otherSubjectAlternativeNames, keyUsages, extendedKeyUsages, profile);
     }
 
     @Override
@@ -143,6 +158,7 @@ public final class CertInfo {
                 + ", validUntil=" + validUntil
                 + ", dnsNames=" + dnsNames
                 + ", ipAddresses=" + ipAddresses
+                + ", otherSubjectAlternativeNames=" + otherSubjectAlternativeNames
                 + ", keyUsages=" + keyUsages
                 + ", extendedKeyUsages=" + extendedKeyUsages
                 + ", profile=" + profile
@@ -155,6 +171,7 @@ public final class CertInfo {
         private Instant validUntil;
         private final List<String> dnsNames = new ArrayList<>();
         private final List<String> ipAddresses = new ArrayList<>();
+        private final List<GeneralName> otherSubjectAlternativeNames = new ArrayList<>();
         private EnumSet<KeyUsageBit> keyUsages;
         private EnumSet<ExtendedKeyUsageId> extendedKeyUsages;
         private CertificateProfile profile;
@@ -184,6 +201,26 @@ public final class CertInfo {
 
         public Builder ipAddress(String ipAddress) {
             this.ipAddresses.add(Objects.requireNonNull(ipAddress, "ipAddress must not be null"));
+            return this;
+        }
+
+        public Builder otherName(String oid, String printableString) {
+            Objects.requireNonNull(oid, "oid must not be null");
+            Objects.requireNonNull(printableString, "printableString must not be null");
+            return otherSubjectAlternativeName(new GeneralName(GeneralName.otherName,
+                    new DERSequence(new org.bouncycastle.asn1.ASN1Encodable[] {
+                            new ASN1ObjectIdentifier(oid),
+                            new DERTaggedObject(true, 0, new DERPrintableString(printableString))
+                    })));
+        }
+
+        public Builder otherSubjectAlternativeName(GeneralName name) {
+            Objects.requireNonNull(name, "subjectAlternativeName must not be null");
+            if (name.getTagNo() != GeneralName.otherName) {
+                throw new IllegalArgumentException(
+                        "subjectAlternativeName must be an otherName GeneralName");
+            }
+            this.otherSubjectAlternativeNames.add(name);
             return this;
         }
 

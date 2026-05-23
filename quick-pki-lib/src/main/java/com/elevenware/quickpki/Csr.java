@@ -87,7 +87,7 @@ public final class Csr {
         applyRdn(subject, BCStyle.CN, builder::commonName);
         applyRdn(subject, BCStyle.C, builder::country);
         applyRdn(subject, BCStyle.O, builder::organization);
-        applyRdn(subject, BCStyle.OU, builder::organizationUnit);
+        applyRdns(subject, BCStyle.OU, builder::addOrganizationUnit);
         applyRdn(subject, BCStyle.DN_QUALIFIER, builder::dnQualifier);
         applyRdn(subject, BCStyle.L, builder::locality);
         applyRdn(subject, BCStyle.ST, builder::stateOrProvince);
@@ -116,6 +116,31 @@ public final class Csr {
      */
     public static List<String> ipSubjectAlternativeNames(PKCS10CertificationRequest csr) {
         return sansOfTag(csr, GeneralName.iPAddress);
+    }
+
+    /**
+     * Returns otherName SAN entries from the CSR's requested subjectAltName
+     * extension, preserving the original ASN.1 value. Open Finance Brasil
+     * BRSEAL certificates use ICP-Brasil otherName entries that callers need
+     * to carry through unchanged from a CSR into the issued certificate.
+     */
+    public static List<GeneralName> otherSubjectAlternativeNames(PKCS10CertificationRequest csr) {
+        Objects.requireNonNull(csr, "csr must not be null");
+        Extensions extensions = csr.getRequestedExtensions();
+        if (extensions == null) {
+            return List.of();
+        }
+        GeneralNames generalNames = GeneralNames.fromExtensions(extensions, Extension.subjectAlternativeName);
+        if (generalNames == null) {
+            return List.of();
+        }
+        List<GeneralName> result = new ArrayList<>();
+        for (GeneralName name : generalNames.getNames()) {
+            if (name.getTagNo() == GeneralName.otherName) {
+                result.add(name);
+            }
+        }
+        return List.copyOf(result);
     }
 
     /**
@@ -215,6 +240,17 @@ public final class Csr {
             return;
         }
         setter.accept(IETFUtils.valueToString(rdns[0].getFirst().getValue()));
+    }
+
+    private static void applyRdns(X500Name name, org.bouncycastle.asn1.ASN1ObjectIdentifier oid,
+                                  java.util.function.Consumer<String> setter) {
+        RDN[] rdns = name.getRDNs(oid);
+        if (rdns == null) {
+            return;
+        }
+        for (RDN rdn : rdns) {
+            setter.accept(IETFUtils.valueToString(rdn.getFirst().getValue()));
+        }
     }
 
     private static Provider ensureBouncyCastleProvider() {
