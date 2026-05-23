@@ -255,6 +255,153 @@ class CertApiServerTest {
     }
 
     @Test
+    void generatesAQwacOpensslConfig() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "psp.example.com",
+                  "country": "GB",
+                  "organization": "Example PSP plc",
+                  "organizationIdentifier": "PSDGB-FCA-123456",
+                  "dnsNames": ["psp.example.com"],
+                  "psd2Roles": ["PSP_AS", "PSP_AI"],
+                  "ncaName": "Financial Conduct Authority",
+                  "ncaId": "GB-FCA",
+                  "pdsLocations": [
+                    { "url": "https://example.com/pki/pds-en.pdf", "language": "en" }
+                  ]
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/qwac", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode jsonBody = Json.MAPPER.readTree(response.body());
+        assertThat(jsonBody.get("filename").asText()).isEqualTo("qwac.cnf");
+        String config = new String(Base64.getDecoder().decode(jsonBody.get("config").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(config).contains("countryName = GB");
+        assertThat(config).contains("organizationName = Example PSP plc");
+        assertThat(config).contains("organizationIdentifier = PSDGB-FCA-123456");
+        assertThat(config).contains("commonName = psp.example.com");
+        assertThat(config).contains("DNS.1 = psp.example.com");
+        assertThat(config).contains("keyUsage = critical, digitalSignature, keyEncipherment");
+        assertThat(config).contains("extendedKeyUsage = serverAuth, clientAuth");
+        // The qCStatements extension is emitted as a raw DER blob.
+        assertThat(config).contains("1.3.6.1.5.5.7.1.3 = DER:");
+        // organizationIdentifier short-name is declared in the [oids] block.
+        assertThat(config).contains("organizationIdentifier = 2.5.4.97");
+    }
+
+    @Test
+    void generatesAQsealOpensslConfig() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "PSP Seal",
+                  "country": "GB",
+                  "organization": "Example PSP plc",
+                  "organizationIdentifier": "PSDGB-FCA-123456",
+                  "onQscd": true
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/qseal", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode jsonBody = Json.MAPPER.readTree(response.body());
+        assertThat(jsonBody.get("filename").asText()).isEqualTo("qseal.cnf");
+        String config = new String(Base64.getDecoder().decode(jsonBody.get("config").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(config).contains("organizationIdentifier = PSDGB-FCA-123456");
+        assertThat(config).contains("keyUsage = critical, digitalSignature, nonRepudiation");
+        assertThat(config).contains("1.3.6.1.5.5.7.1.3 = DER:");
+        // QSEAL deliberately carries no EKU.
+        assertThat(config).doesNotContain("extendedKeyUsage");
+    }
+
+    @Test
+    void rejectsQwacOpensslConfigRequestMissingRequiredFields() throws Exception {
+        start("certificates:issue");
+
+        HttpResponse<String> response = post("/v1/openssl-configs/qwac", "active-token",
+                "{\"commonName\":\"psp.example.com\"}");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(Json.MAPPER.readTree(response.body()).get("error").asText())
+                .isEqualTo("invalid_request");
+    }
+
+    @Test
+    void rejectsQwacOpensslConfigWithUnknownPsd2Role() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "commonName": "psp.example.com",
+                  "country": "GB",
+                  "organization": "Example PSP plc",
+                  "organizationIdentifier": "PSDGB-FCA-123456",
+                  "dnsNames": ["psp.example.com"],
+                  "psd2Roles": ["PSP_NONSENSE"],
+                  "ncaName": "Financial Conduct Authority",
+                  "ncaId": "GB-FCA"
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/openssl-configs/qwac", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(Json.MAPPER.readTree(response.body()).get("error_description").asText())
+                .contains("PSD2 role");
+    }
+
+    @Test
+    void qwacAndQsealOpensslConfigEndpointsAreAuthenticated() throws Exception {
+        start("certificates:issue");
+
+        HttpResponse<String> qwac = post("/v1/openssl-configs/qwac", "expired-token", "{}");
+        assertThat(qwac.statusCode()).isEqualTo(401);
+
+        HttpResponse<String> qseal = post("/v1/openssl-configs/qseal", "expired-token", "{}");
+        assertThat(qseal.statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void issuesAQwacCertificateFromAQwacCsr() throws Exception {
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64QwacCsr("psp.example.com");
+
+        HttpResponse<String> response = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\",\"profile\":\"QWAC\"}");
+
+        assertThat(response.statusCode()).isEqualTo(201);
+        X509Certificate cert = parseCertificate(Json.MAPPER.readTree(response.body()));
+        assertThat(cert.getKeyUsage()[0]).as("digitalSignature").isTrue();
+        assertThat(cert.getKeyUsage()[2]).as("keyEncipherment").isTrue();
+        assertThat(cert.getExtendedKeyUsage()).as("QWAC has serverAuth+clientAuth")
+                .isNotNull();
+        // qCStatements extension (1.3.6.1.5.5.7.1.3) carried through from CSR.
+        assertThat(cert.getExtensionValue("1.3.6.1.5.5.7.1.3"))
+                .as("QWAC must carry qCStatements")
+                .isNotNull();
+    }
+
+    @Test
+    void rejectsNonCompliantQwacCsrAsBadRequest() throws Exception {
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64Csr("psp.example.com");
+
+        HttpResponse<String> response = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\",\"profile\":\"QWAC\"}");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        JsonNode bodyJson = Json.MAPPER.readTree(response.body());
+        assertThat(bodyJson.get("error").asText()).isEqualTo("bad_csr");
+        assertThat(bodyJson.get("error_description").asText().toLowerCase())
+                .containsAnyOf("qwac", "organizationidentifier", "qccompliance");
+    }
+
+    @Test
     void rejectsBrsealOpensslConfigRequestWithTooFewOrganizationUnits() throws Exception {
         start("certificates:issue");
         String body = """

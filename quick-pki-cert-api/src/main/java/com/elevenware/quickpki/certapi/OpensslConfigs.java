@@ -1,9 +1,16 @@
 package com.elevenware.quickpki.certapi;
 
+import com.elevenware.quickpki.EuQualified;
+import com.elevenware.quickpki.QcStatement;
+
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Generates openssl {@code req} config files from a caller's structured
@@ -156,6 +163,181 @@ final class OpensslConfigs {
             sb.append(line).append('\n');
         }
         return sb.toString();
+    }
+
+    static String forQwac(QwacOpensslConfigRequest request) {
+        requireNonBlank(request.commonName(), "commonName");
+        requireNonBlank(request.country(), "country");
+        if (request.country().length() != 2) {
+            throw new CertApiException(400, "invalid_request",
+                    "'country' must be a two-letter ISO 3166-1 code");
+        }
+        requireNonBlank(request.organization(), "organization");
+        requireNonBlank(request.organizationIdentifier(), "organizationIdentifier");
+        List<String> dnsNames = request.dnsNames() == null ? List.of() : request.dnsNames();
+        if (dnsNames.isEmpty()) {
+            throw new CertApiException(400, "invalid_request",
+                    "QWAC requires at least one entry in 'dnsNames'");
+        }
+
+        Map<String, String> dn = euQualifiedDn(request.country(), request.stateOrProvince(),
+                request.locality(), request.organization(), request.serialNumber(),
+                request.organizationIdentifier(), request.commonName());
+
+        List<String> sanLines = new ArrayList<>();
+        int i = 1;
+        for (String dnsName : dnsNames) {
+            sanLines.add("DNS." + i++ + " = " + dnsName);
+        }
+
+        List<QcStatement> statements = new ArrayList<>();
+        statements.add(EuQualified.qcCompliance());
+        statements.add(EuQualified.qcType(EuQualified.OID_QC_TYPE_WEB));
+        appendPsd2(statements, request.psd2Roles(), request.ncaName(), request.ncaId());
+        appendQcPds(statements, request.pdsLocations());
+        String qcDer = encodeQcStatementsAsHex(statements);
+
+        return renderConfig(euQualifiedOids(), dn, "ext_qwac",
+                qwacExtensions(sanLines, qcDer));
+    }
+
+    static String forQseal(QsealOpensslConfigRequest request) {
+        requireNonBlank(request.commonName(), "commonName");
+        requireNonBlank(request.country(), "country");
+        if (request.country().length() != 2) {
+            throw new CertApiException(400, "invalid_request",
+                    "'country' must be a two-letter ISO 3166-1 code");
+        }
+        requireNonBlank(request.organization(), "organization");
+        requireNonBlank(request.organizationIdentifier(), "organizationIdentifier");
+
+        Map<String, String> dn = euQualifiedDn(request.country(), request.stateOrProvince(),
+                request.locality(), request.organization(), request.serialNumber(),
+                request.organizationIdentifier(), request.commonName());
+
+        List<QcStatement> statements = new ArrayList<>();
+        statements.add(EuQualified.qcCompliance());
+        statements.add(EuQualified.qcType(EuQualified.OID_QC_TYPE_ESEAL));
+        if (request.onQscd()) {
+            statements.add(EuQualified.qcSSCD());
+        }
+        appendPsd2(statements, request.psd2Roles(), request.ncaName(), request.ncaId());
+        appendQcPds(statements, request.pdsLocations());
+        String qcDer = encodeQcStatementsAsHex(statements);
+
+        return renderConfig(euQualifiedOids(), dn, "ext_qseal", qsealExtensions(qcDer));
+    }
+
+    private static Map<String, String> euQualifiedDn(
+            String country, String stateOrProvince, String locality,
+            String organization, String serialNumber, String organizationIdentifier,
+            String commonName) {
+        // ETSI EN 319 412-1 §5.1.2 / -3 §4.2 RDN order for the EU qualified
+        // legal-person subject; matches Csr.x500Name(... QWAC/QSEAL ...).
+        Map<String, String> dn = new LinkedHashMap<>();
+        dn.put("countryName", country);
+        if (stateOrProvince != null && !stateOrProvince.isBlank()) {
+            dn.put("stateOrProvinceName", stateOrProvince);
+        }
+        if (locality != null && !locality.isBlank()) {
+            dn.put("localityName", locality);
+        }
+        dn.put("organizationName", organization);
+        if (serialNumber != null && !serialNumber.isBlank()) {
+            dn.put("serialNumber", serialNumber);
+        }
+        dn.put("organizationIdentifier", organizationIdentifier);
+        dn.put("commonName", commonName);
+        return dn;
+    }
+
+    private static Map<String, String> euQualifiedOids() {
+        Map<String, String> oids = new LinkedHashMap<>();
+        // organizationIdentifier (2.5.4.97) has no built-in short name in
+        // openssl; declare it so the [dn] section can use it by name.
+        oids.put("organizationIdentifier", "2.5.4.97");
+        return oids;
+    }
+
+    private static String qwacExtensions(List<String> sanLines, String qcDerHex) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[ext_qwac]\n");
+        sb.append("keyUsage = critical, digitalSignature, keyEncipherment\n");
+        sb.append("extendedKeyUsage = serverAuth, clientAuth\n");
+        sb.append("subjectAltName = @san\n");
+        // qCStatements (1.3.6.1.5.5.7.1.3) emitted as a raw DER blob: the
+        // ETSI / PSD2 payload shapes are awkward to express in openssl's
+        // ASN1 macro language, and the binary stays stable as long as the
+        // caller's selections do.
+        sb.append("1.3.6.1.5.5.7.1.3 = DER:").append(qcDerHex).append('\n');
+        sb.append('\n');
+        sb.append("[san]\n");
+        for (String line : sanLines) {
+            sb.append(line).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static String qsealExtensions(String qcDerHex) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[ext_qseal]\n");
+        sb.append("keyUsage = critical, digitalSignature, nonRepudiation\n");
+        // QSEAL explicitly carries no ExtendedKeyUsage extension.
+        sb.append("1.3.6.1.5.5.7.1.3 = DER:").append(qcDerHex).append('\n');
+        return sb.toString();
+    }
+
+    private static void appendPsd2(List<QcStatement> statements, List<String> roleNames,
+                                   String ncaName, String ncaId) {
+        if (roleNames == null || roleNames.isEmpty()) {
+            return;
+        }
+        if (ncaName == null || ncaName.isBlank() || ncaId == null || ncaId.isBlank()) {
+            throw new CertApiException(400, "invalid_request",
+                    "'ncaName' and 'ncaId' are required when 'psd2Roles' is supplied");
+        }
+        Set<EuQualified.Psd2Role> roles = EnumSet.noneOf(EuQualified.Psd2Role.class);
+        for (String name : roleNames) {
+            try {
+                roles.add(EuQualified.Psd2Role.valueOf(name));
+            } catch (IllegalArgumentException e) {
+                throw new CertApiException(400, "invalid_request",
+                        "unknown PSD2 role '" + name + "'; valid roles are "
+                                + EuQualified.Psd2Role.PSP_AS + ", " + EuQualified.Psd2Role.PSP_PI
+                                + ", " + EuQualified.Psd2Role.PSP_AI + ", " + EuQualified.Psd2Role.PSP_IC);
+            }
+        }
+        statements.add(EuQualified.psd2QcStatement(roles, ncaName, ncaId));
+    }
+
+    private static void appendQcPds(List<QcStatement> statements, List<PdsLocationRequest> pdsLocations) {
+        if (pdsLocations == null || pdsLocations.isEmpty()) {
+            return;
+        }
+        List<EuQualified.PdsLocation> locations = new ArrayList<>(pdsLocations.size());
+        for (PdsLocationRequest loc : pdsLocations) {
+            if (loc.url() == null || loc.url().isBlank()
+                    || loc.language() == null || loc.language().isBlank()) {
+                throw new CertApiException(400, "invalid_request",
+                        "each pdsLocations entry must carry both 'url' and 'language'");
+            }
+            try {
+                locations.add(new EuQualified.PdsLocation(loc.url(), loc.language()));
+            } catch (IllegalArgumentException e) {
+                throw new CertApiException(400, "invalid_request", e.getMessage());
+            }
+        }
+        statements.add(EuQualified.qcPds(locations));
+    }
+
+    private static String encodeQcStatementsAsHex(List<QcStatement> statements) {
+        try {
+            byte[] der = com.elevenware.quickpki.Csr.encodeQcStatements(statements).getEncoded();
+            return HexFormat.of().withUpperCase().formatHex(der);
+        } catch (IOException e) {
+            throw new CertApiException(500, "server_error",
+                    "failed to encode qCStatements: " + e.getMessage());
+        }
     }
 
     private static String brsealExtensions(List<String> sanLines) {

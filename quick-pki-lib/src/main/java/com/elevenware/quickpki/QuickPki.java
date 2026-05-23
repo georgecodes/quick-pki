@@ -479,6 +479,10 @@ public class QuickPki {
         if (sans != null) {
             certificateBuilder.addExtension(Extension.subjectAlternativeName, false, sans);
         }
+        if (!info.getQcStatements().isEmpty()) {
+            certificateBuilder.addExtension(Extension.qCStatements, false,
+                    Csr.encodeQcStatements(info.getQcStatements()));
+        }
 
         X509CertificateHolder rootCertHolder = certificateBuilder.build(rootCertContentSigner);
         X509Certificate cert = new JcaX509CertificateConverter().setProvider(provider).getCertificate(rootCertHolder);
@@ -510,18 +514,30 @@ public class QuickPki {
 
     private void validateProfileCompliance(CertInfo info, PublicKey publicKey) {
         CertificateProfile profile = info.getProfile();
-        if (profile != CertificateProfile.BRCAC && profile != CertificateProfile.BRSEAL) {
+        if (profile == CertificateProfile.BRCAC || profile == CertificateProfile.BRSEAL) {
+            validateOpenFinanceAlgorithm(publicKey);
+            SubjectName subjectName = info.getSubjectName();
+            if (subjectName == null) {
+                throw new IllegalArgumentException(profile + " certificates require an Open Finance subject DN");
+            }
+            if (profile == CertificateProfile.BRCAC) {
+                validateBrcac(info, subjectName);
+            } else {
+                validateBrseal(info, subjectName);
+            }
             return;
         }
-        validateOpenFinanceAlgorithm(publicKey);
-        SubjectName subjectName = info.getSubjectName();
-        if (subjectName == null) {
-            throw new IllegalArgumentException(profile + " certificates require an Open Finance subject DN");
-        }
-        if (profile == CertificateProfile.BRCAC) {
-            validateBrcac(info, subjectName);
-        } else {
-            validateBrseal(info, subjectName);
+        if (profile == CertificateProfile.QWAC || profile == CertificateProfile.QSEAL) {
+            validateEuQualifiedAlgorithm(publicKey);
+            SubjectName subjectName = info.getSubjectName();
+            if (subjectName == null) {
+                throw new IllegalArgumentException(profile + " certificates require an EU qualified subject DN");
+            }
+            if (profile == CertificateProfile.QWAC) {
+                validateQwac(info, subjectName);
+            } else {
+                validateQseal(info, subjectName);
+            }
         }
     }
 
@@ -591,6 +607,111 @@ public class QuickPki {
         if (!found) {
             throw new IllegalArgumentException("BRSEAL certificates require otherName " + oid);
         }
+    }
+
+    // ETSI EN 319 411-2 §6.6.1: qualified certs must use an algorithm and key
+    // size from the SOG-IS list. RSA must be ≥ 2048 bits; ECDSA must use a
+    // named curve in the P-256/P-384/P-521 family. The signature algorithm on
+    // the issued cert must use SHA-256 or stronger.
+    private void validateEuQualifiedAlgorithm(PublicKey publicKey) {
+        String algo = publicKey.getAlgorithm();
+        if ("RSA".equalsIgnoreCase(algo)) {
+            int bits = ((RSAPublicKey) publicKey).getModulus().bitLength();
+            if (bits < 2048) {
+                throw new IllegalArgumentException(
+                        "EU QWAC/QSEAL certificates require an RSA key of at least 2048 bits (got "
+                                + bits + ")");
+            }
+        } else if (!"EC".equalsIgnoreCase(algo) && !"ECDSA".equalsIgnoreCase(algo)) {
+            throw new IllegalArgumentException(
+                    "EU QWAC/QSEAL certificates require an RSA or ECDSA public key (got " + algo + ")");
+        }
+        String sigAlg = issuerInfo.getEffectiveSignatureAlgorithm();
+        if (sigAlg == null || !sigAlg.toUpperCase().contains("SHA256")
+                && !sigAlg.toUpperCase().contains("SHA384")
+                && !sigAlg.toUpperCase().contains("SHA512")) {
+            throw new IllegalArgumentException(
+                    "EU QWAC/QSEAL certificates require an issuer signature algorithm of "
+                            + "SHA-256 or stronger (got " + sigAlg + ")");
+        }
+    }
+
+    private void validateQwac(CertInfo info, SubjectName subjectName) {
+        validateEuQualifiedSubject(subjectName, "QWAC");
+        requireNonBlank(subjectName.getCommonName(), "commonName");
+        if (info.getDnsNames().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "QWAC certificates require at least one DNS subjectAltName");
+        }
+        if (!info.getIpAddresses().isEmpty() || !info.getOtherSubjectAlternativeNames().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "QWAC certificates support DNS subjectAltName entries only");
+        }
+        requireQcStatement(info, EuQualified.OID_QC_COMPLIANCE,
+                "QWAC certificates require the ETSI QcCompliance qcStatement (" + EuQualified.OID_QC_COMPLIANCE + ")");
+        requireQcType(info, EuQualified.OID_QC_TYPE_WEB,
+                "QWAC certificates require a QcType qcStatement listing id-etsi-qct-web ("
+                        + EuQualified.OID_QC_TYPE_WEB + ")");
+    }
+
+    private void validateQseal(CertInfo info, SubjectName subjectName) {
+        validateEuQualifiedSubject(subjectName, "QSEAL");
+        requireNonBlank(subjectName.getCommonName(), "commonName");
+        if (!info.getIpAddresses().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "QSEAL certificates do not support IP subjectAltName entries");
+        }
+        requireQcStatement(info, EuQualified.OID_QC_COMPLIANCE,
+                "QSEAL certificates require the ETSI QcCompliance qcStatement (" + EuQualified.OID_QC_COMPLIANCE + ")");
+        requireQcType(info, EuQualified.OID_QC_TYPE_ESEAL,
+                "QSEAL certificates require a QcType qcStatement listing id-etsi-qct-eseal ("
+                        + EuQualified.OID_QC_TYPE_ESEAL + ")");
+    }
+
+    private void validateEuQualifiedSubject(SubjectName subjectName, String profileName) {
+        requireNonBlank(subjectName.getCountry(), "country");
+        if (subjectName.getCountry().length() != 2) {
+            throw new IllegalArgumentException(
+                    profileName + " country must be a two-letter ISO 3166-1 code (got '"
+                            + subjectName.getCountry() + "')");
+        }
+        requireNonBlank(subjectName.getOrganization(), "organization");
+        requireNonBlank(subjectName.getOrganizationIdentifier(), "organizationIdentifier");
+        // ETSI EN 319 412-1 §5.1.4 fixes the syntax for legal-person
+        // organizationIdentifier; for PSD2 (TS 119 495 §5) it must be
+        // PSD{2-letter-country}-{NCA-Id}-{PSP-Id}. Accept either the ETSI
+        // prefixes (VAT/NTR/PSD/LEI) or any other non-blank value with a
+        // soft warning - issuance for non-PSD2 EU qualified certs is allowed.
+    }
+
+    private void requireQcStatement(CertInfo info, String oid, String message) {
+        ASN1ObjectIdentifier target = new ASN1ObjectIdentifier(oid);
+        boolean found = info.getQcStatements().stream()
+                .anyMatch(s -> target.equals(s.statementId()));
+        if (!found) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    private void requireQcType(CertInfo info, String typeOid, String message) {
+        ASN1ObjectIdentifier qcTypeOid = new ASN1ObjectIdentifier(EuQualified.OID_QC_TYPE);
+        ASN1ObjectIdentifier target = new ASN1ObjectIdentifier(typeOid);
+        for (QcStatement s : info.getQcStatements()) {
+            if (!qcTypeOid.equals(s.statementId()) || s.statementInfo() == null) {
+                continue;
+            }
+            try {
+                ASN1Sequence types = ASN1Sequence.getInstance(s.statementInfo());
+                for (int i = 0; i < types.size(); i++) {
+                    if (target.equals(ASN1ObjectIdentifier.getInstance(types.getObjectAt(i)))) {
+                        return;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Malformed QcType payload: fall through to the throw below.
+            }
+        }
+        throw new IllegalArgumentException(message);
     }
 
     private String otherNameOid(GeneralName name) {

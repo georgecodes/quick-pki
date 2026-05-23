@@ -23,7 +23,9 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -266,6 +268,111 @@ public class CsrBuilderTests {
         CertInfo info = OpenFinanceBrasil.brsealCertInfo(subject).build();
         assertEquals(CertificateProfile.BRSEAL, info.getProfile());
         assertEquals(subject, info.getSubjectName());
+    }
+
+    @Test
+    void euQualifiedQwacBuilderProducesCsrInEtsiRdnOrder() throws Exception {
+        KeyPair keys = generateRsaKeyPair();
+
+        PKCS10CertificationRequest csr = EuQualified.qwac()
+                .country("GB")
+                .organization("Example PSP plc")
+                .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                .commonName("psp.example.com")
+                .dnsName("psp.example.com")
+                .buildCsr(keys);
+
+        assertDoesNotThrow(() -> Csr.verifySignature(csr));
+
+        RDN[] rdns = csr.getSubject().getRDNs();
+        assertEquals(BCStyle.C, rdns[0].getFirst().getType());
+        assertEquals(BCStyle.O, rdns[1].getFirst().getType());
+        assertEquals(BCStyle.ORGANIZATION_IDENTIFIER, rdns[2].getFirst().getType());
+        assertEquals(BCStyle.CN, rdns[3].getFirst().getType());
+
+        assertEquals(List.of("psp.example.com"), Csr.dnsSubjectAlternativeNames(csr));
+        // The two mandatory ETSI qcStatements ride in the CSR's
+        // extensionRequest so the issuer can carry them through.
+        java.util.List<QcStatement> qcStatements = Csr.qcStatements(csr);
+        assertEquals(2, qcStatements.size());
+        assertEquals(EuQualified.OID_QC_COMPLIANCE, qcStatements.get(0).statementId().getId());
+        assertEquals(EuQualified.OID_QC_TYPE, qcStatements.get(1).statementId().getId());
+    }
+
+    @Test
+    void euQualifiedQwacBuilderCsrCanBeIssuedAsQwacCertificate() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair keys = generateRsaKeyPair();
+
+        PKCS10CertificationRequest csr = EuQualified.qwac()
+                .country("GB")
+                .organization("Example PSP plc")
+                .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                .commonName("psp.example.com")
+                .dnsName("psp.example.com")
+                .psd2(Set.of(EuQualified.Psd2Role.PSP_AS), "Financial Conduct Authority", "GB-FCA")
+                .buildCsr(keys);
+
+        CertificateBundle bundle = pki.issueCertificate(csr,
+                CertInfo.fromCsr(csr).profile(CertificateProfile.QWAC).build());
+
+        X500Name subject = new JcaX509CertificateHolder(bundle.getCertificate()).getSubject();
+        assertEquals("PSDGB-FCA-123456",
+                subject.getRDNs(BCStyle.ORGANIZATION_IDENTIFIER)[0].getFirst().getValue().toString());
+        assertEquals("psp.example.com",
+                subject.getRDNs(BCStyle.CN)[0].getFirst().getValue().toString());
+        // QC statements (including the PSD2 one) survived the CSR round trip.
+        assertNotNull(bundle.getCertificate()
+                .getExtensionValue(EuQualified.OID_QC_STATEMENTS_EXTENSION));
+    }
+
+    @Test
+    void euQualifiedQsealBuilderCsrCanBeIssuedAsQsealCertificate() throws Exception {
+        QuickPki pki = QuickPki.createDefault();
+        KeyPair keys = generateRsaKeyPair();
+
+        PKCS10CertificationRequest csr = EuQualified.qseal()
+                .country("GB")
+                .organization("Example PSP plc")
+                .organizationIdentifier(EuQualified.psd2OrganizationIdentifier("GB", "FCA", "123456"))
+                .commonName("PSP Seal")
+                .onQscd()
+                .buildCsr(keys);
+
+        CertificateBundle bundle = pki.issueCertificate(csr,
+                CertInfo.fromCsr(csr).profile(CertificateProfile.QSEAL).build());
+
+        // QSEAL forbids ExtendedKeyUsage and requires nonRepudiation.
+        assertTrue(bundle.getCertificate().getKeyUsage()[1], "QSEAL must assert nonRepudiation");
+        assertNotNull(bundle.getCertificate()
+                .getExtensionValue(EuQualified.OID_QC_STATEMENTS_EXTENSION));
+    }
+
+    @Test
+    void qwacCertInfoFactoryAttachesProfileSubjectAndDefaultQcStatements() {
+        SubjectName subject = SubjectName.builder()
+                .country("GB").organization("Example PSP plc")
+                .organizationIdentifier("PSDGB-FCA-123456")
+                .commonName("psp.example.com").build();
+
+        CertInfo info = EuQualified.qwacCertInfo(subject).dnsName("psp.example.com").build();
+
+        assertEquals(CertificateProfile.QWAC, info.getProfile());
+        assertEquals(subject, info.getSubjectName());
+        assertEquals(2, info.getQcStatements().size());
+    }
+
+    @Test
+    void qsealCertInfoFactoryAttachesProfileSubjectAndDefaultQcStatements() {
+        SubjectName subject = SubjectName.builder()
+                .country("GB").organization("Example PSP plc")
+                .organizationIdentifier("PSDGB-FCA-123456")
+                .commonName("PSP Seal").build();
+
+        CertInfo info = EuQualified.qsealCertInfo(subject).build();
+
+        assertEquals(CertificateProfile.QSEAL, info.getProfile());
+        assertEquals(2, info.getQcStatements().size());
     }
 
     @Test

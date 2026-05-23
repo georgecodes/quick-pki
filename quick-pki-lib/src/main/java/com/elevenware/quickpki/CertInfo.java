@@ -23,6 +23,7 @@ public final class CertInfo {
     private final List<String> dnsNames;
     private final List<String> ipAddresses;
     private final List<GeneralName> otherSubjectAlternativeNames;
+    private final List<QcStatement> qcStatements;
     private final Set<KeyUsageBit> keyUsages;
     private final Set<ExtendedKeyUsageId> extendedKeyUsages;
     private final CertificateProfile profile;
@@ -34,6 +35,7 @@ public final class CertInfo {
         this.dnsNames = List.copyOf(builder.dnsNames);
         this.ipAddresses = List.copyOf(builder.ipAddresses);
         this.otherSubjectAlternativeNames = List.copyOf(builder.otherSubjectAlternativeNames);
+        this.qcStatements = List.copyOf(builder.qcStatements);
         // Never null: a CertInfo without an explicit profile behaves exactly
         // as QuickPki did before profiles existed.
         this.profile = builder.profile == null ? CertificateProfile.DEFAULT : builder.profile;
@@ -83,6 +85,12 @@ public final class CertInfo {
         for (GeneralName otherName : Csr.otherSubjectAlternativeNames(csr)) {
             builder.otherSubjectAlternativeName(otherName);
         }
+        // QC statements live in the CSR's extensionRequest the same way SANs
+        // do; carry them through so an EU qualified profile can be issued
+        // from a CSR the subscriber built with EuQualified.qwac()/qseal().
+        for (QcStatement statement : Csr.qcStatements(csr)) {
+            builder.qcStatement(statement);
+        }
         return builder;
     }
 
@@ -108,6 +116,14 @@ public final class CertInfo {
 
     public List<GeneralName> getOtherSubjectAlternativeNames() {
         return otherSubjectAlternativeNames;
+    }
+
+    /**
+     * QCStatements to emit in the leaf's {@code qCStatements} extension. Empty
+     * when the caller has set none; the extension is omitted in that case.
+     */
+    public List<QcStatement> getQcStatements() {
+        return qcStatements;
     }
 
     // Null when the caller hasn't expressed a preference (QuickPki picks an
@@ -139,6 +155,7 @@ public final class CertInfo {
                 && Objects.equals(dnsNames, that.dnsNames)
                 && Objects.equals(ipAddresses, that.ipAddresses)
                 && Objects.equals(otherSubjectAlternativeNames, that.otherSubjectAlternativeNames)
+                && Objects.equals(qcStatements, that.qcStatements)
                 && Objects.equals(keyUsages, that.keyUsages)
                 && Objects.equals(extendedKeyUsages, that.extendedKeyUsages)
                 && profile == that.profile;
@@ -147,7 +164,8 @@ public final class CertInfo {
     @Override
     public int hashCode() {
         return Objects.hash(subjectName, validFrom, validUntil, dnsNames,
-                ipAddresses, otherSubjectAlternativeNames, keyUsages, extendedKeyUsages, profile);
+                ipAddresses, otherSubjectAlternativeNames, qcStatements,
+                keyUsages, extendedKeyUsages, profile);
     }
 
     @Override
@@ -159,6 +177,7 @@ public final class CertInfo {
                 + ", dnsNames=" + dnsNames
                 + ", ipAddresses=" + ipAddresses
                 + ", otherSubjectAlternativeNames=" + otherSubjectAlternativeNames
+                + ", qcStatements=" + qcStatements
                 + ", keyUsages=" + keyUsages
                 + ", extendedKeyUsages=" + extendedKeyUsages
                 + ", profile=" + profile
@@ -172,6 +191,7 @@ public final class CertInfo {
         private final List<String> dnsNames = new ArrayList<>();
         private final List<String> ipAddresses = new ArrayList<>();
         private final List<GeneralName> otherSubjectAlternativeNames = new ArrayList<>();
+        private final List<QcStatement> qcStatements = new ArrayList<>();
         private EnumSet<KeyUsageBit> keyUsages;
         private EnumSet<ExtendedKeyUsageId> extendedKeyUsages;
         private CertificateProfile profile;
@@ -221,6 +241,17 @@ public final class CertInfo {
                         "subjectAlternativeName must be an otherName GeneralName");
             }
             this.otherSubjectAlternativeNames.add(name);
+            return this;
+        }
+
+        /**
+         * Adds a QCStatement (RFC 3739) to the leaf's {@code qCStatements}
+         * extension. Multiple calls append in the order they were made.
+         * {@link EuQualified} supplies factory methods for the standard ETSI
+         * and PSD2 statements.
+         */
+        public Builder qcStatement(QcStatement statement) {
+            this.qcStatements.add(Objects.requireNonNull(statement, "statement must not be null"));
             return this;
         }
 
