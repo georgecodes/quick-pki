@@ -61,4 +61,13 @@
             <column name="created_at"/>
         </createIndex>
     </changeSet>
+
+    <changeSet id="002-cert-api-csr-pem" author="quick-pki">
+        <!-- Persist the PKCS#10 alongside the issued cert so the GET endpoint
+             can serve it back. Nullable: rows persisted before this changeset
+             have no recorded CSR, and the value is never back-filled. -->
+        <addColumn tableName="issued_certificates">
+            <column name="csr_pem" type="text"/>
+        </addColumn>
+    </changeSet>
 </databaseChangeLog>

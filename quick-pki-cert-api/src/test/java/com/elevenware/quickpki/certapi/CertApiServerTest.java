@@ -14,6 +14,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.sql.Connection;
@@ -165,6 +166,162 @@ class CertApiServerTest {
 
         assertThat(response.statusCode()).isEqualTo(403);
         assertThat(Json.MAPPER.readTree(response.body()).get("error").asText()).isEqualTo("insufficient_scope");
+    }
+
+    @Test
+    void issuesABrcacCertificateFromStructuredFields() throws Exception {
+        start("certificates:issue");
+        KeyPair subscriberKeys = CertApiTestSupport.rsaKeyPair();
+        String publicKey = CertApiTestSupport.base64PublicKey(subscriberKeys.getPublic());
+        String body = """
+                {
+                  "publicKey": "%s",
+                  "commonName": "transport.example.com",
+                  "businessCategory": "Private Organization",
+                  "serialNumber": "12345678000199",
+                  "organization": "Example Participant Ltda",
+                  "stateOrProvince": "SP",
+                  "locality": "Sao Paulo",
+                  "organizationIdentifier": "OFBBR-12345678",
+                  "userId": "software-statement-uuid",
+                  "dnsNames": ["transport.example.com"]
+                }
+                """.formatted(publicKey);
+
+        HttpResponse<String> response = post("/v1/certificates/brcac", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(201);
+        JsonNode jsonBody = Json.MAPPER.readTree(response.body());
+        // Cert binds the subscriber's public key, even though they never sent a CSR.
+        X509Certificate cert = parseCertificate(jsonBody);
+        assertThat(cert.getPublicKey()).isEqualTo(subscriberKeys.getPublic());
+        // BRCAC: digitalSignature + keyEncipherment, EKU clientAuth only.
+        assertThat(cert.getKeyUsage()[0]).as("digitalSignature").isTrue();
+        assertThat(cert.getKeyUsage()[2]).as("keyEncipherment").isTrue();
+        assertThat(cert.getExtendedKeyUsage())
+                .containsExactly("1.3.6.1.5.5.7.3.2"); // clientAuth
+        assertThat(jsonBody.get("subject").asText()).contains("CN=transport.example.com");
+        // The synthetic CSR is returned and points at the same public key.
+        String csrPem = new String(Base64.getDecoder().decode(jsonBody.get("csr").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(csrPem).contains("BEGIN CERTIFICATE REQUEST");
+
+        // It's persisted: GET returns the same CSR.
+        HttpResponse<String> fetched = get("/v1/certificates/" + jsonBody.get("id").asText(),
+                "active-token");
+        assertThat(fetched.statusCode()).isEqualTo(200);
+        assertThat(Json.MAPPER.readTree(fetched.body()).get("csr").asText())
+                .isEqualTo(jsonBody.get("csr").asText());
+    }
+
+    @Test
+    void issuesABrsealCertificateFromStructuredFields() throws Exception {
+        start("certificates:issue");
+        KeyPair subscriberKeys = CertApiTestSupport.rsaKeyPair();
+        String publicKey = CertApiTestSupport.base64PublicKey(subscriberKeys.getPublic());
+        String body = """
+                {
+                  "publicKey": "%s",
+                  "commonName": "Seal Co",
+                  "userId": "OFBBR-12345678",
+                  "organizationUnits": ["Example CA", "12345678000199",
+                                        "Validacao por certificado digital"],
+                  "responsiblePersonName": "Responsible Person",
+                  "companyCnpj": "12345678000199",
+                  "responsiblePersonData": "197001010000000000000",
+                  "companyCei": "123456789012"
+                }
+                """.formatted(publicKey);
+
+        HttpResponse<String> response = post("/v1/certificates/brseal", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(201);
+        X509Certificate cert = parseCertificate(Json.MAPPER.readTree(response.body()));
+        assertThat(cert.getPublicKey()).isEqualTo(subscriberKeys.getPublic());
+        // BRSEAL: digitalSignature + nonRepudiation, no EKU.
+        assertThat(cert.getKeyUsage()[1]).as("nonRepudiation").isTrue();
+        assertThat(cert.getExtendedKeyUsage()).isNull();
+    }
+
+    @Test
+    void rejectsBrcacRequestMissingThePublicKey() throws Exception {
+        start("certificates:issue");
+
+        HttpResponse<String> response = post("/v1/certificates/brcac", "active-token",
+                "{\"commonName\":\"transport.example.com\"}");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        JsonNode bodyJson = Json.MAPPER.readTree(response.body());
+        assertThat(bodyJson.get("error").asText()).isEqualTo("invalid_request");
+        assertThat(bodyJson.get("error_description").asText().toLowerCase()).contains("publickey");
+    }
+
+    @Test
+    void rejectsBrcacRequestWithMalformedPublicKey() throws Exception {
+        start("certificates:issue");
+        String body = """
+                {
+                  "publicKey": "bm90LXBlbQ==",
+                  "commonName": "transport.example.com"
+                }
+                """;
+
+        HttpResponse<String> response = post("/v1/certificates/brcac", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(Json.MAPPER.readTree(response.body()).get("error").asText())
+                .isEqualTo("invalid_request");
+    }
+
+    @Test
+    void rejectsBrcacRequestMissingOpenFinanceFields() throws Exception {
+        // No businessCategory, no serialNumber: validation inside QuickPki fires.
+        start("certificates:issue");
+        KeyPair subscriberKeys = CertApiTestSupport.rsaKeyPair();
+        String publicKey = CertApiTestSupport.base64PublicKey(subscriberKeys.getPublic());
+        String body = """
+                {
+                  "publicKey": "%s",
+                  "commonName": "transport.example.com",
+                  "dnsNames": ["transport.example.com"]
+                }
+                """.formatted(publicKey);
+
+        HttpResponse<String> response = post("/v1/certificates/brcac", "active-token", body);
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(Json.MAPPER.readTree(response.body()).get("error").asText())
+                .isEqualTo("invalid_request");
+    }
+
+    @Test
+    void brcacAndBrsealEndpointsAreAuthenticated() throws Exception {
+        start("certificates:issue");
+
+        HttpResponse<String> brcac = post("/v1/certificates/brcac", "expired-token", "{}");
+        assertThat(brcac.statusCode()).isEqualTo(401);
+
+        HttpResponse<String> brseal = post("/v1/certificates/brseal", "expired-token", "{}");
+        assertThat(brseal.statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void issuedCertificatesEndpointReturnsTheCsrAlongsideTheCert() throws Exception {
+        // Round-trip through the existing CSR endpoint: the CSR a caller
+        // submitted is now persisted and served back via GET.
+        start("certificates:issue");
+        String csr = CertApiTestSupport.base64Csr("service.example.com");
+
+        HttpResponse<String> issued = post("/v1/certificates", "active-token",
+                "{\"csr\":\"" + csr + "\"}");
+        String id = Json.MAPPER.readTree(issued.body()).get("id").asText();
+
+        HttpResponse<String> fetched = get("/v1/certificates/" + id, "active-token");
+        assertThat(fetched.statusCode()).isEqualTo(200);
+        String csrPem = new String(Base64.getDecoder().decode(
+                Json.MAPPER.readTree(fetched.body()).get("csr").asText()),
+                StandardCharsets.UTF_8);
+        assertThat(csrPem).contains("BEGIN CERTIFICATE REQUEST");
     }
 
     @Test

@@ -4,6 +4,10 @@ import com.elevenware.quickpki.CertificateProfile;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.router.JavalinDefaultRoutingApi;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openssl.PEMParser;
+import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,8 +15,10 @@ import org.slf4j.LoggerFactory;
 import javax.sql.DataSource;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -86,6 +92,8 @@ final class CertApiServer {
 
     private void routes(JavalinDefaultRoutingApi routes) {
         routes.post("/v1/certificates", this::issueCertificate);
+        routes.post("/v1/certificates/brcac", this::issueBrcacCertificate);
+        routes.post("/v1/certificates/brseal", this::issueBrsealCertificate);
         routes.get("/v1/certificates/{id}", this::getCertificate);
         routes.get("/issuer/root.pem", ctx -> ctx.contentType("application/pem-certificate-chain")
                 .result(caService.issuerPem()));
@@ -179,8 +187,24 @@ final class CertApiServer {
         CertificateRequest request = parseRequest(ctx);
         PKCS10CertificationRequest csr = Csrs.parse(request.csr());
         CertificateProfile profile = resolveProfile(request.profile());
-        CertificateAuthorityService.Issued issued = caService.issue(csr, profile);
+        persistAndRespond(ctx, caService.issue(csr, profile));
+    }
 
+    private void issueBrcacCertificate(Context ctx) {
+        BrcacCertificateRequest request = parseBody(ctx, BrcacCertificateRequest.class,
+                "a JSON body with the BRCAC subject attributes and a base64-encoded 'publicKey'");
+        PublicKey publicKey = parsePublicKey(request.publicKey());
+        persistAndRespond(ctx, caService.issueBrcac(request, publicKey));
+    }
+
+    private void issueBrsealCertificate(Context ctx) {
+        BrsealCertificateRequest request = parseBody(ctx, BrsealCertificateRequest.class,
+                "a JSON body with the BRSEAL subject attributes and a base64-encoded 'publicKey'");
+        PublicKey publicKey = parsePublicKey(request.publicKey());
+        persistAndRespond(ctx, caService.issueBrseal(request, publicKey));
+    }
+
+    private void persistAndRespond(Context ctx, CertificateAuthorityService.Issued issued) {
         X509Certificate certificate = issued.certificate();
         UUID id = UUID.randomUUID();
         String clientId = ctx.attribute("clientId");
@@ -190,6 +214,7 @@ final class CertApiServer {
                 certificate.getSubjectX500Principal().getName(),
                 issued.certificatePem(),
                 issued.chainPem(),
+                issued.csrPem(),
                 certificate.getNotBefore().toInstant(),
                 certificate.getNotAfter().toInstant(),
                 clientId,
@@ -219,6 +244,9 @@ final class CertApiServer {
         json.put("subject", certificate.subjectDn());
         json.put("certificate", base64(certificate.certificatePem()));
         json.put("chain", base64(certificate.chainPem()));
+        if (certificate.csrPem() != null) {
+            json.put("csr", base64(certificate.csrPem()));
+        }
         json.put("notBefore", certificate.notBefore().toString());
         json.put("notAfter", certificate.notAfter().toString());
         json.put("issuedAt", certificate.createdAt().toString());
@@ -240,8 +268,13 @@ final class CertApiServer {
     }
 
     private CertificateRequest parseRequest(Context ctx) {
+        return parseBody(ctx, CertificateRequest.class,
+                "a JSON object with a base64-encoded 'csr' field");
+    }
+
+    private <T> T parseBody(Context ctx, Class<T> type, String shape) {
         try {
-            CertificateRequest request = Json.MAPPER.readValue(ctx.body(), CertificateRequest.class);
+            T request = Json.MAPPER.readValue(ctx.body(), type);
             if (request == null) {
                 throw new CertApiException(400, "invalid_request", "a JSON request body is required");
             }
@@ -250,7 +283,40 @@ final class CertApiServer {
             throw e;
         } catch (Exception e) {
             throw new CertApiException(400, "invalid_request",
-                    "request body must be a JSON object with a base64-encoded 'csr' field");
+                    "request body must be " + shape);
+        }
+    }
+
+    // Reads a SubjectPublicKeyInfo PEM (the kind 'openssl genpkey ... -out
+    // priv.pem; openssl pkey -in priv.pem -pubout' produces). The 'publicKey'
+    // field on the request is itself base64-encoded so callers round-trip the
+    // same encoding the CSR field uses.
+    private PublicKey parsePublicKey(String base64Pem) {
+        if (base64Pem == null || base64Pem.isBlank()) {
+            throw new CertApiException(400, "invalid_request",
+                    "request must include a non-empty base64-encoded 'publicKey' field");
+        }
+        byte[] decoded;
+        try {
+            decoded = Base64.getMimeDecoder().decode(base64Pem.trim());
+        } catch (IllegalArgumentException e) {
+            throw new CertApiException(400, "invalid_request", "'publicKey' is not valid base64");
+        }
+        String asText = new String(decoded, StandardCharsets.US_ASCII);
+        try (PEMParser parser = new PEMParser(new StringReader(asText))) {
+            Object object = parser.readObject();
+            if (object instanceof SubjectPublicKeyInfo info) {
+                return new JcaPEMKeyConverter()
+                        .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                        .getPublicKey(info);
+            }
+            throw new CertApiException(400, "invalid_request",
+                    "'publicKey' must be a PEM-encoded SubjectPublicKeyInfo");
+        } catch (CertApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new CertApiException(400, "invalid_request",
+                    "could not parse 'publicKey': " + e.getMessage());
         }
     }
 
